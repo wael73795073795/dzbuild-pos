@@ -165,4 +165,3 @@ mod tests {
         assert_eq!(fiscal_year(i64::MIN), NaiveDateTime::MIN.year());
     }
 }
-
