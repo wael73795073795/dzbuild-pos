@@ -4,13 +4,13 @@ import type { Lang } from "@/lib/i18n";
 // U+00A0 NO-BREAK SPACE (before the currency symbol), U+202F NARROW NO-BREAK SPACE (thousands, fr/ar).
 const NBSP = "\u00A0";
 const NNBSP = "\u202F";
-const LOCALES: Record<Lang, string> = { ar: "ar-DZ", fr: "fr-DZ", en: "en-GB" };
+const LOCALES: Record<Lang, string> = { ar: "ar-EG", fr: "fr-DZ", en: "en-GB" };
 
 function group(digits: string, separator: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, separator);
 }
 
-/** Integer centimes → "4 500,00 DA" (fr), "4,500.00 DA" (en), "4 500,00 دج" (ar). No floats. */
+/** Integer centimes/piasters → "4 500,00 EGP" (fr/en), "4 500,00 ج.م" (ar). No floats. */
 export function formatDZD(centimes: number, lang: Lang, options: { hideCentimes?: boolean } = {}): string {
   if (!Number.isSafeInteger(centimes)) {
     throw new RangeError(`amount must be an integer number of centimes, got ${centimes}`);
@@ -18,7 +18,7 @@ export function formatDZD(centimes: number, lang: Lang, options: { hideCentimes?
   const abs = Math.abs(centimes);
   const separator = lang === "en" ? "," : NNBSP;
   const decimal = lang === "en" ? "." : ",";
-  const symbol = lang === "ar" ? "دج" : "DA";
+  const symbol = lang === "ar" ? "ج.م" : "EGP";
   const number = options.hideCentimes
     ? group(String(Math.floor((abs + 50) / 100)), separator)
     : `${group(String(Math.floor(abs / 100)), separator)}${decimal}${String(abs % 100).padStart(2, "0")}`;
@@ -28,7 +28,7 @@ export function formatDZD(centimes: number, lang: Lang, options: { hideCentimes?
 
 /** Splits "1.000.000,50" / "1,000,000.50" / "4500" into whole and fraction parts. */
 function splitDecimal(input: string): { whole: string; fraction: string } | null {
-  const cleaned = input.replace(/[\s\u00A0\u202F']/g, "").replace(/(DA|دج)$/iu, "");
+  const cleaned = input.replace(/[\s\u00A0\u202F']/g, "").replace(/(DA|دج|EGP|ج\.م)$/iu, "");
   if (cleaned === "") return null;
   const last = Math.max(cleaned.lastIndexOf(","), cleaned.lastIndexOf("."));
   const isDecimal = last >= 0 && cleaned.length - last - 1 <= 2;
@@ -81,11 +81,11 @@ const BIDI_MARKS = /[\u200E\u200F\u061C]/g;
 // The Arabic comma (U+060C) Intl puts between the date and the time.
 const ARABIC_COMMA_SPACE = /،\s*/g;
 
-/** Gregorian date in Africa/Algiers with Western digits, free of bidi marks: "28/09/2026 13:00" in
+/** Gregorian date in Africa/Cairo with Western digits, free of bidi marks: "28/09/2026 13:00" in
  * every language, safe inside `<bdi dir="ltr">`. */
 export function formatDate(ms: number, lang: Lang, options: { withTime?: boolean } = {}): string {
   const format: Intl.DateTimeFormatOptions = {
-    timeZone: "Africa/Algiers",
+    timeZone: "Africa/Cairo",
     calendar: "gregory",
     numberingSystem: "latn",
     year: "numeric",
