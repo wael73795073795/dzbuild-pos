@@ -1,5 +1,5 @@
 //! Amounts in letters (spec §6, DOC-004): "quatre mille cinq cents dinars et cinquante
-//! centimes" / "أربعة آلاف وخمسمائة دينار وخمسون سنتيماً" / "four thousand five hundred dinars
+//! centimes" / "أربعة آلاف وخمسمائة جنيه وخمسون قرشاً" / "four thousand five hundred dinars
 //! and fifty centimes". In-house converters: the number grammar (French cent/vingt agreement,
 //! Arabic dual, plural and accusative agreement, and the counted noun that agrees with the
 //! number) is code, not translation. The words around it are document strings (spec §11) in
@@ -13,9 +13,9 @@ use crate::locales;
 use pos_core::lang::Lang;
 use pos_core::money::Money;
 
-/// The amount in words in `lang`: dinars, then centimes when there are any; zero is "zéro
-/// dinar" / "صفر دينار" / "zero dinars"; a negative amount (refund) goes through
-/// `letters.negative` ("moins …" / "ناقص …" / "minus …").
+/// The amount in words in `lang`: major unit (pounds/dinars), then minor unit
+/// (piasters/centimes) when there are any; zero is "صفر جنيه" / "zéro dinar" /
+/// "zero dinars"; a negative amount (refund) goes through `letters.negative`.
 pub fn amount_in_letters(lang: Lang, amount: Money) -> String {
     let abs = amount.0.unsigned_abs();
     let (d, c) = (abs / 100, abs % 100);
@@ -74,7 +74,7 @@ fn fill(lang: Lang, key: &str, fallback: &str, vars: &[(&str, &str)]) -> String 
 mod tests {
     use super::*;
 
-    /// The values spec §6 asks for, in dinars, then with centimes.
+    /// The values spec §6 asks for, in major units, then with minor units.
     const SPEC_VALUES: [i64; 12] = [
         0, 1, 2, 11, 21, 100, 101, 200, 1_000, 1_001, 2_000, 1_000_000,
     ];
@@ -112,18 +112,18 @@ mod tests {
         assert_eq!(
             words(Lang::Ar),
             [
-                "صفر دينار",
-                "دينار واحد",
-                "ديناران",
-                "أحد عشر ديناراً",
-                "واحد وعشرون ديناراً",
-                "مائة دينار",
-                "مائة وواحد دينار",
-                "مائتا دينار",
-                "ألف دينار",
-                "ألف وواحد دينار",
-                "ألفا دينار",
-                "مليون دينار",
+                "صفر جنيه",
+                "جنيه واحد",
+                "جنيهان",
+                "أحد عشر جنيهاً",
+                "واحد وعشرون جنيهاً",
+                "مائة جنيه",
+                "مائة وواحد جنيه",
+                "مائتا جنيه",
+                "ألف جنيه",
+                "ألف وواحد جنيه",
+                "ألفا جنيه",
+                "مليون جنيه",
             ]
         );
     }
@@ -158,7 +158,7 @@ mod tests {
         );
         assert_eq!(
             amount_in_letters(Lang::Ar, amount),
-            "أربعة آلاف وخمسمائة دينار وخمسون سنتيماً"
+            "أربعة آلاف وخمسمائة جنيه وخمسون قرشاً"
         );
         assert_eq!(
             amount_in_letters(Lang::En, amount),
@@ -169,16 +169,16 @@ mod tests {
     #[test]
     fn centimes_alone_and_negative_amounts() {
         assert_eq!(amount_in_letters(Lang::Fr, Money(1)), "un centime");
-        assert_eq!(amount_in_letters(Lang::Ar, Money(1)), "سنتيم واحد");
-        assert_eq!(amount_in_letters(Lang::Ar, Money(2)), "سنتيمان");
-        assert_eq!(amount_in_letters(Lang::Ar, Money(5)), "خمسة سنتيمات");
-        assert_eq!(amount_in_letters(Lang::Ar, Money(15)), "خمسة عشر سنتيماً");
+        assert_eq!(amount_in_letters(Lang::Ar, Money(1)), "قرش واحد");
+        assert_eq!(amount_in_letters(Lang::Ar, Money(2)), "قرشان");
+        assert_eq!(amount_in_letters(Lang::Ar, Money(5)), "خمسة قروش");
+        assert_eq!(amount_in_letters(Lang::Ar, Money(15)), "خمسة عشر قرشاً");
         assert_eq!(amount_in_letters(Lang::En, Money(1)), "one centime");
         assert_eq!(
             amount_in_letters(Lang::Fr, Money(-150)),
             "moins un dinar et cinquante centimes"
         );
-        assert_eq!(amount_in_letters(Lang::Ar, Money(-100)), "ناقص دينار واحد");
+        assert_eq!(amount_in_letters(Lang::Ar, Money(-100)), "ناقص جنيه واحد");
         assert_eq!(
             amount_in_letters(Lang::En, Money(-5_000)),
             "minus fifty dinars"
@@ -205,19 +205,19 @@ mod tests {
 
     #[test]
     fn arabic_agreement_of_counted_nouns() {
-        let ar = |dinars: i64| amount_in_letters(Lang::Ar, Money(dinars * 100));
-        assert_eq!(ar(3), "ثلاثة دنانير");
-        assert_eq!(ar(10), "عشرة دنانير");
-        assert_eq!(ar(12), "اثنا عشر ديناراً");
-        assert_eq!(ar(250), "مائتان وخمسون ديناراً");
-        assert_eq!(ar(3_000), "ثلاثة آلاف دينار");
-        assert_eq!(ar(11_000), "أحد عشر ألف دينار");
-        assert_eq!(ar(11_500), "أحد عشر ألفاً وخمسمائة دينار");
-        assert_eq!(ar(100_000), "مائة ألف دينار");
-        assert_eq!(ar(200_500), "مائتا ألف وخمسمائة دينار");
-        assert_eq!(ar(2_000_000), "مليونا دينار");
-        assert_eq!(ar(2_500_000), "مليونان وخمسمائة ألف دينار");
-        assert_eq!(ar(1_000_000_000), "مليار دينار");
+        let ar = |pounds: i64| amount_in_letters(Lang::Ar, Money(pounds * 100));
+        assert_eq!(ar(3), "ثلاثة جنيهات");
+        assert_eq!(ar(10), "عشرة جنيهات");
+        assert_eq!(ar(12), "اثنا عشر جنيهاً");
+        assert_eq!(ar(250), "مائتان وخمسون جنيهاً");
+        assert_eq!(ar(3_000), "ثلاثة آلاف جنيه");
+        assert_eq!(ar(11_000), "أحد عشر ألف جنيه");
+        assert_eq!(ar(11_500), "أحد عشر ألفاً وخمسمائة جنيه");
+        assert_eq!(ar(100_000), "مائة ألف جنيه");
+        assert_eq!(ar(200_500), "مائتا ألف وخمسمائة جنيه");
+        assert_eq!(ar(2_000_000), "مليونا جنيه");
+        assert_eq!(ar(2_500_000), "مليونان وخمسمائة ألف جنيه");
+        assert_eq!(ar(1_000_000_000), "مليار جنيه");
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
     }
 
     /// Spec §11: the words around the number (the negative prefix, the conjunction between
-    /// dinars and centimes) are document strings read from `pos-docs/locales` (`letters.*`),
+    /// major and minor units) are document strings read from `pos-docs/locales` (`letters.*`),
     /// so a catalogue edit reaches the printed amount; only the number grammar is code.
     #[test]
     fn the_labels_around_the_number_come_from_the_document_catalogues() {
@@ -262,3 +262,4 @@ mod tests {
         }
     }
 }
+
