@@ -150,6 +150,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
   release:
     name: Draft GitHub release
     needs: [prepare, installers]
@@ -176,8 +177,21 @@ jobs:
       - name: One release folder, one SHA256SUMS.txt
         shell: pwsh
         run: |
-          $sources = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP "installers") -Directory | Sort-Object Name | ForEach-Object { $_.FullName })
-          node scripts/release/collect.mjs $env:VERSION @sources
+          $root = Join-Path $env:RUNNER_TEMP "installers"
+          $versionDirs = @(Get-ChildItem -Path $root -Directory -Recurse -Filter $env:VERSION | Sort-Object FullName)
+          if ($versionDirs.Count -gt 0) {
+            $sources = @()
+            foreach ($dir in $versionDirs) {
+              $stage = Join-Path $env:RUNNER_TEMP ("stage-" + [guid]::NewGuid().ToString("N"))
+              New-Item -ItemType Directory -Path (Join-Path $stage $env:VERSION) -Force | Out-Null
+              Copy-Item -Path (Join-Path $dir.FullName "*") -Destination (Join-Path $stage $env:VERSION) -Recurse -Force
+              $sources += $stage
+            }
+            node scripts/release/collect.mjs $env:VERSION @sources
+          } else {
+            $sources = @(Get-ChildItem $root -Directory | Sort-Object Name | ForEach-Object { $_.FullName })
+            node scripts/release/collect.mjs $env:VERSION @sources
+          }
       - name: Update manifests (pnpm release:manifest)
         shell: pwsh
         env:
