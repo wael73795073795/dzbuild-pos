@@ -4,6 +4,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 
 /// Africa/Cairo standard offset from UTC in milliseconds (UTC+2).
 pub const CAIRO_OFFSET_MS: i64 = 2 * 3_600_000;
+pub const ALGIERS_OFFSET_MS: i64 = CAIRO_OFFSET_MS;
 
 /// Current time as unix milliseconds UTC.
 pub fn now_ms() -> i64 {
