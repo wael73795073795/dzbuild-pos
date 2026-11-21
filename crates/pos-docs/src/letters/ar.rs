@@ -1,8 +1,8 @@
-//! Arabic (تفقيط, research 04 §8.2): the counted noun agrees with the number: 1 → "دينار واحد",
-//! 2 → dual "ديناران", 3-10 → plural "دنانير" (number in the feminine form), 11-99 → accusative
-//! singular "ديناراً", hundreds and the rest → genitive singular "دينار". Thousands, millions
+//! Arabic (تفقيط, research 04 §8.2): the counted noun agrees with the number: 1 → "جنيه واحد",
+//! 2 → dual "جنيهان", 3-10 → plural "جنيهات" (number in the feminine form), 11-99 → accusative
+//! singular "جنيهاً", hundreds and the rest → genitive singular "جنيه". Thousands, millions
 //! and billions are counted nouns themselves; a dual or accusative that directly precedes
-//! another noun takes its construct form ("ألفا دينار", "أحد عشر ألف دينار", "مائتا ألف").
+//! another noun takes its construct form ("ألفا جنيه", "أحد عشر ألف جنيه", "مائتا ألف").
 //! Units are joined with " و" (the conjunction written against the next word).
 
 const ONES: [&str; 11] = [
@@ -73,19 +73,19 @@ const BILLION: Noun = Noun {
     plural: "مليارات",
     accusative: "ملياراً",
 };
-const DINAR: Noun = Noun {
-    singular: "دينار",
-    dual: "ديناران",
-    dual_construct: "دينارا",
-    plural: "دنانير",
-    accusative: "ديناراً",
+const POUND: Noun = Noun {
+    singular: "جنيه",
+    dual: "جنيهان",
+    dual_construct: "جنيها",
+    plural: "جنيهات",
+    accusative: "جنيهاً",
 };
-const CENTIME: Noun = Noun {
-    singular: "سنتيم",
-    dual: "سنتيمان",
-    dual_construct: "سنتيما",
-    plural: "سنتيمات",
-    accusative: "سنتيماً",
+const PIASTER: Noun = Noun {
+    singular: "قرش",
+    dual: "قرشان",
+    dual_construct: "قرشا",
+    plural: "قروش",
+    accusative: "قرشاً",
 };
 
 fn pick(table: &[&'static str], n: u64) -> &'static str {
@@ -184,9 +184,9 @@ fn with_noun(n: u64, noun: &Noun) -> String {
 }
 
 pub(super) fn dinars(n: u64) -> String {
-    with_noun(n, &DINAR)
+    with_noun(n, &POUND)
 }
 
 pub(super) fn centimes(n: u64) -> String {
-    with_noun(n, &CENTIME)
+    with_noun(n, &PIASTER)
 }
