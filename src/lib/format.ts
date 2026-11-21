@@ -109,3 +109,4 @@ export function formatNumber(value: number, lang: Lang, maximumFractionDigits = 
     .format(value)
     .replace(BIDI_MARKS, "");
 }
+
