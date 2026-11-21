@@ -1,7 +1,7 @@
 import { formatDZD, formatNumber } from "@/lib/format";
 import type { Lang } from "@/lib/i18n";
 
-/** Amounts on paper: integer centimes → "23 449,00 DA" in the document's language. */
+/** Amounts on paper: integer centimes/piasters → "23 449,00 ج.م" (ar) / "23 449,00 EGP" in the document's language. */
 export const docMoney = (centimes: number, lang: Lang) => formatDZD(centimes, lang);
 
 /** Quantities on paper: milli-units → "10", "2,5", "0,125". */
