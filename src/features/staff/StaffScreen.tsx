@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Link, Route, Routes, useNavigate, useParams } from "react-router";
 import { Amount } from "@/components/amount";
+import { Avatar } from "@/components/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { dayToMs } from "@/lib/dates";
@@ -120,19 +121,17 @@ function Employees() {
           {rows.map((p) => (
             <tr
               key={p.userId}
-              className="h-12 cursor-pointer border-t border-line hover:bg-brand-soft"
+              className="h-14 cursor-pointer border-t border-line hover:bg-brand-soft"
               onClick={() => void navigate(`/staff/${p.userId}`)}
             >
-              <th scope="row" className="px-3 text-start font-semibold">
-                <Link to={`/staff/${p.userId}`} className="hover:underline">
-                  {p.displayName}
-                </Link>
-                {p.active ? null : (
-                  <>
-                    {" "}
-                    <Badge>{t("staff:inactive")}</Badge>
-                  </>
-                )}
+              <th scope="row" className="px-3 py-1.5 text-start font-semibold">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={p.displayName} userId={p.userId} />
+                  <Link to={`/staff/${p.userId}`} className="hover:underline">
+                    {p.displayName}
+                  </Link>
+                  {p.active ? null : <Badge>{t("staff:inactive")}</Badge>}
+                </div>
               </th>
               <td className="px-3">{p.roleName}</td>
               <td className="px-3 max-lg:hidden">{p.phone ? <bdi dir="ltr">{p.phone}</bdi> : null}</td>
