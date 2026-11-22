@@ -1,9 +1,10 @@
 import { ArrowLeft } from "lucide-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { Amount } from "@/components/amount";
+import { Avatar, writeUserAvatar } from "@/components/avatar";
 import { DateRangePicker } from "@/components/date-range";
 import { NumericInput } from "@/components/numeric-input";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,59 @@ type Open = "advance" | "repay" | "deduct" | null;
 
 /** The highest commission a profile takes (pos-core `staff::COMMISSION_MAX_BP`, 50 %). */
 const COMMISSION_MAX_BP = 5_000;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Invalid data URL"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToAvatarDataUrl(file: File, maxSize = 256): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("Image decode not supported"));
+      el.src = objectUrl;
+    });
+
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    if (!width || !height) {
+      return await readFileAsDataUrl(file);
+    }
+
+    const side = Math.min(width, height);
+    const sx = (width - side) / 2;
+    const sy = (height - side) / 2;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = maxSize;
+    canvas.height = maxSize;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return await readFileAsDataUrl(file);
+    }
+
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
+    try {
+      return canvas.toDataURL("image/jpeg", 0.85);
+    } catch {
+      return await readFileAsDataUrl(file);
+    }
+  } catch {
+    return await readFileAsDataUrl(file);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 /** `/staff/:userId` (EMP lite): the employee's file, what they owe on their advances with its
  * ledger, the advance, repayment and deduction, and their shifts of a period. */
@@ -100,15 +154,18 @@ function EmployeeFile({
     <div className="flex flex-col gap-6">
       {back}
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="flex flex-wrap items-center gap-3 text-3xl font-bold">
-            {employee.displayName}
-            {employee.active ? null : <Badge>{t("staff:inactive")}</Badge>}
-          </h1>
-          <p className="text-ink-2">{employee.roleName}</p>
-          <p className="text-xl font-bold" role="status">
-            {t("staff:ledger.owed", { amount: formatDZD(employee.owed, lang) })}
-          </p>
+        <div className="flex items-center gap-4">
+          <Avatar name={employee.displayName} userId={employee.userId} size="lg" />
+          <div className="flex flex-col gap-1">
+            <h1 className="flex flex-wrap items-center gap-3 text-3xl font-bold">
+              {employee.displayName}
+              {employee.active ? null : <Badge>{t("staff:inactive")}</Badge>}
+            </h1>
+            <p className="text-ink-2">{employee.roleName}</p>
+            <p className="text-xl font-bold" role="status">
+              {t("staff:ledger.owed", { amount: formatDZD(employee.owed, lang) })}
+            </p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           {can("cash.paid_in_out") ? (
@@ -140,12 +197,13 @@ function EmployeeFile({
 
 const text = (value: string) => (value.trim() === "" ? null : value.trim());
 
-/** Phone, hire date, salary, commission rate and note (`staff_profile_set`). */
+/** Phone, hire date, salary, commission rate, avatar and note (`staff_profile_set`). */
 function ProfileCard({ employee }: { employee: StaffProfile }) {
   const { t } = useTranslation();
   const lang = useLang();
   const errorText = useErrorText();
   const save = useSetProfile();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [phone, setPhone] = useState(employee.phone ?? "");
   const [hireDate, setHireDate] = useState(employee.hireDate ?? "");
   const [salary, setSalary] = useState(
@@ -158,6 +216,23 @@ function ProfileCard({ employee }: { employee: StaffProfile }) {
   const salaryOk = salary.trim() === "" || (salaryValue !== null && salaryValue >= 0);
   const commissionBp = parsePercentBp(commission.trim() === "" ? "0" : commission);
   const commissionOk = commissionBp !== null && commissionBp <= COMMISSION_MAX_BP;
+
+  const handleAvatarPick = async (file?: File) => {
+    if (!file) return;
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      writeUserAvatar(employee.userId, dataUrl);
+      toast.success("تم حفظ صورة المستخدم");
+    } catch {
+      toast.error("تعذر تحميل الصورة");
+    }
+  };
+
+  const handleAvatarRemove = () => {
+    writeUserAvatar(employee.userId, null);
+    toast.success("تمت إزالة صورة المستخدم");
+  };
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setTried(true);
@@ -179,6 +254,35 @@ function ProfileCard({ employee }: { employee: StaffProfile }) {
   return (
     <Card>
       <h2 className="text-xl font-bold">{t("staff:profile.title")}</h2>
+      <div className="mb-4 flex flex-wrap items-center gap-4 border-b border-line pb-4">
+        <Avatar name={employee.displayName} userId={employee.userId} size="lg" />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,.heic,.heif,.avif,.webp,.bmp,.ico,.tif,.tiff,.svg"
+            className="hidden"
+            onChange={(event) => {
+              void handleAvatarPick(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            اختيار صورة للمستخدم
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={handleAvatarRemove}
+          >
+            إزالة الصورة
+          </Button>
+        </div>
+      </div>
       <form noValidate onSubmit={submit} className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="staff-phone" label={t("staff:profile.phone")}>
