@@ -243,3 +243,4 @@ jobs:
           }
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "Draft release $tag ready: $($files.Count) files" >> $env:GITHUB_STEP_SUMMARY
+          
