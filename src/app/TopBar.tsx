@@ -25,6 +25,12 @@ export function TopBar({ session }: { session: Session }) {
     { nameAr: session.roleNameAr, nameFr: session.roleNameFr, nameEn: session.roleNameEn },
     lang,
   );
+  const sessionRecord = session as unknown as Record<string, unknown>;
+  const currentUserId =
+    (typeof sessionRecord.userId === "string" && sessionRecord.userId) ||
+    (typeof sessionRecord.user_id === "string" && sessionRecord.user_id) ||
+    null;
+
   return (
     <header className="flex min-h-16 items-center gap-3 border-b border-line bg-surface px-4">
       <p className="truncate text-lg font-bold">{shopName || t("common:appName")}</p>
@@ -36,7 +42,7 @@ export function TopBar({ session }: { session: Session }) {
         <LanguageToggle value={lang} onChange={(next) => setLanguage.mutate(next)} />
         <ThemeToggle value={theme} onChange={setTheme} />
         <div className="flex items-center gap-2 ps-2">
-          <Avatar name={session.displayName} />
+          <Avatar name={session.displayName} userId={currentUserId} />
           <div className="flex flex-col leading-tight max-[1100px]:hidden">
             <span className="font-semibold">{session.displayName}</span>
             <span className="text-sm text-ink-2">{roleName}</span>
