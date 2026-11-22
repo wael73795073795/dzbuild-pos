@@ -52,7 +52,7 @@ export function LoginScreen() {
       <main className="flex flex-1 flex-col items-center justify-center gap-6 px-4 pb-[var(--osk-inset,0px)]">
         {selected ? (
           <section className="flex w-full max-w-xs flex-col items-center gap-4">
-            <Avatar name={selected.displayName} size="lg" />
+            <Avatar name={selected.displayName} userId={selected.id} size="lg" />
             <h1 className="text-center text-2xl font-bold">
               {t("auth:login.pinTitle", { name: selected.displayName })}
             </h1>
@@ -91,7 +91,7 @@ export function LoginScreen() {
                     onClick={() => setSelected(tile)}
                     className="flex w-full flex-col items-center gap-2 rounded-card border border-line bg-surface p-4 hover:bg-surface-2"
                   >
-                    <Avatar name={tile.displayName} size="lg" />
+                    <Avatar name={tile.displayName} userId={tile.id} size="lg" />
                     <span className="text-lg font-semibold">{tile.displayName}</span>
                     <span className="text-sm text-ink-2">
                       {localizedName(
