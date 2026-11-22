@@ -519,3 +519,4 @@ function ShiftTable({ from, to, userId }: { from: string; to: string; userId: st
     </div>
   );
 }
+
