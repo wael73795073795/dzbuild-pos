@@ -1,4 +1,16 @@
-import { Copy, KeyRound, Pencil, Plus, UserCheck, UserX } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Pencil,
+  Plus,
+  Printer,
+  RefreshCw,
+  UserCheck,
+  UserX,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -32,6 +44,254 @@ import { useLang } from "@/lib/use-language";
 import { DuplicateRoleDialog, RoleDialog } from "./RoleDialog";
 
 type Errors = Partial<Record<string, string>>;
+
+const OWNER_BARCODE_STORAGE_KEY = "dzbuild_owner_barcode_v1";
+const OWNER_BARCODE_SHOW_DIGITS_KEY = "dzbuild_owner_barcode_show_digits_v1";
+
+function generateNumericOwnerBarcode(length = 16): string {
+  const safeLength = Math.max(12, Math.min(20, Math.floor(length)));
+  const digits: string[] = [];
+
+  if (typeof globalThis.crypto !== "undefined" && typeof globalThis.crypto.getRandomValues === "function") {
+    const buf = new Uint32Array(safeLength);
+    globalThis.crypto.getRandomValues(buf);
+    for (let i = 0; i < safeLength; i += 1) {
+      digits.push(String(buf[i] % 10));
+    }
+  } else {
+    for (let i = 0; i < safeLength; i += 1) {
+      digits.push(String(Math.floor(Math.random() * 10)));
+    }
+  }
+
+  if (digits.every((d) => d === digits[0])) {
+    digits[digits.length - 1] = digits[0] === "9" ? "1" : String(Number(digits[0]) + 1);
+  }
+
+  return digits.join("");
+}
+
+function readOwnerBarcode(): string | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(OWNER_BARCODE_STORAGE_KEY);
+    if (!raw) return null;
+    const cleaned = raw.replace(/\D+/g, "").trim();
+    return cleaned.length >= 8 ? cleaned : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeOwnerBarcode(code: string): string {
+  const cleaned = code.replace(/\D+/g, "").trim();
+  try {
+    globalThis.localStorage?.setItem(OWNER_BARCODE_STORAGE_KEY, cleaned);
+  } catch {
+    // Ignore storage errors
+  }
+  return cleaned;
+}
+
+function ensureOwnerBarcode(length = 16): string {
+  const existing = readOwnerBarcode();
+  if (existing) return existing;
+  return writeOwnerBarcode(generateNumericOwnerBarcode(length));
+}
+
+function readShowBarcodeDigits(): boolean {
+  try {
+    const raw = globalThis.localStorage?.getItem(OWNER_BARCODE_SHOW_DIGITS_KEY);
+    if (raw === null) return true;
+    return raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function writeShowBarcodeDigits(show: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(OWNER_BARCODE_SHOW_DIGITS_KEY, String(show));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: boolean }) {
+  const digitPatterns: Record<string, string> = {
+    "0": "11121211",
+    "1": "12111221",
+    "2": "11211221",
+    "3": "12211112",
+    "4": "11122112",
+    "5": "12122111",
+    "6": "11222111",
+    "7": "11111222",
+    "8": "12111122",
+    "9": "11211122",
+  };
+
+  const bars: { widthPx: number; dark: boolean }[] = [
+    { widthPx: 3, dark: true },
+    { widthPx: 3, dark: false },
+    { widthPx: 3, dark: true },
+  ];
+
+  for (const ch of code) {
+    const pattern = digitPatterns[ch] ?? digitPatterns["0"];
+    for (let i = 0; i < pattern.length; i += 1) {
+      const units = Number(pattern[i]) || 1;
+      bars.push({
+        widthPx: units * 2,
+        dark: i % 2 === 0,
+      });
+    }
+  }
+
+  bars.push(
+    { widthPx: 3, dark: true },
+    { widthPx: 3, dark: false },
+    { widthPx: 3, dark: true },
+  );
+
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-card border border-line bg-white px-6 py-5 text-black">
+      <div
+        aria-label={showDigits ? `Owner barcode ${code}` : "Owner barcode"}
+        className="flex h-28 items-stretch justify-center overflow-hidden"
+      >
+        {bars.map((bar, idx) => (
+          <span
+            key={idx}
+            style={{
+              width: `${bar.widthPx}px`,
+              backgroundColor: bar.dark ? "#000000" : "#ffffff",
+            }}
+            className="inline-block h-full shrink-0"
+          />
+        ))}
+      </div>
+      {showDigits ? (
+        <div dir="ltr" className="select-all font-mono text-lg font-bold tracking-[0.25em] text-black">
+          {code}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
+  const [barcode, setBarcode] = useState<string>(() => ensureOwnerBarcode(16));
+  const [showDigits, setShowDigits] = useState<boolean>(() => readShowBarcodeDigits());
+  const [copied, setCopied] = useState(false);
+
+  if (!isOwner) return null;
+
+  const handleToggleDigits = () => {
+    const next = !showDigits;
+    setShowDigits(next);
+    writeShowBarcodeDigits(next);
+  };
+
+  const handleRegenerate = () => {
+    const next = writeOwnerBarcode(generateNumericOwnerBarcode(16));
+    setBarcode(next);
+    setCopied(false);
+    toast.success("تم توليد باركود جديد للمالك وتم إيقاف الباركود السابق");
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard?.writeText(barcode);
+      setCopied(true);
+      toast.success("تم نسخ رقم الباركود");
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      toast.error("تعذر نسخ الرقم تلقائياً");
+    }
+  };
+
+  const handlePrint = () => {
+    const printWindow = window.open("", "_blank", "width=560,height=420");
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    const digitsHtml = showDigits
+      ? `<div style="font-family: monospace; font-size: 22px; font-weight: 700; letter-spacing: 5px; margin-top: 12px; direction: ltr;">${barcode}</div>`
+      : "";
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>باركود صلاحية المالك</title>
+          <style>
+            body {
+              font-family: sans-serif;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              min-height: 92vh;
+              margin: 0;
+              background: #fff;
+              color: #000;
+            }
+            .title { font-size: 16px; font-weight: 700; margin-bottom: 14px; }
+          </style>
+        </head>
+        <body>
+          <div class="title">باركود موافقة المالك</div>
+          <div style="font-family: monospace; font-size: 14px; color: #333;">الرمز الرقمي: ${showDigits ? barcode : "مخفي"}</div>
+          ${digitsHtml}
+          <script>window.onload = function() { window.print(); window.close(); };</script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold">باركود صلاحية المالك</h2>
+          <p className="text-sm text-ink-2">
+            يُستخدم للموافقة لمرة واحدة على العملية الحالية فقط، وينتهي أثره فور انتهاء العملية.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={handleToggleDigits}>
+            {showDigits ? <EyeOff aria-hidden /> : <Eye aria-hidden />}
+            {showDigits ? "إخفاء الأرقام" : "إظهار الأرقام"}
+          </Button>
+          <Button type="button" variant="outline" onClick={handleCopy}>
+            {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+            {copied ? "تم النسخ" : "نسخ الرقم"}
+          </Button>
+          <Button type="button" variant="outline" onClick={handlePrint}>
+            <Printer aria-hidden />
+            طباعة الباركود
+          </Button>
+          <Button type="button" variant="primary" onClick={handleRegenerate}>
+            <RefreshCw aria-hidden />
+            توليد باركود جديد
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+        <NumericScaleBarcode code={barcode} showDigits={showDigits} />
+        <div className="max-w-md space-y-1.5 text-sm leading-relaxed text-ink-2">
+          <p>• باركود رقمي فريد بطول <strong>16 رقماً عشوائياً</strong> بحجم واضح وسهل القراءة على ورق عادي أو ليبل.</p>
+          <p>• يمكنك <strong>إخفاء أو إظهار الأرقام</strong> وترك الرسم فقط في أي وقت.</p>
+          <p>• عند الضغط على <strong>توليد باركود جديد</strong> يتوقف الباركود القديم فوراً.</p>
+          <p>• يسري على <strong>العملية الحالية فقط</strong> وبعد انتهائها يتطلب أي طلب جديد إذناً من جديد.</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 function getSavedAvatar(userId: string): string | null {
   try {
@@ -248,6 +508,7 @@ export function UsersSettings({ session }: { session: Session }) {
       </Card>
 
       <AutoLockCard />
+      <OwnerBarcodeCard isOwner={session.isOwner} />
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
