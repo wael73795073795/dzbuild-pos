@@ -2,7 +2,7 @@ import { Copy, KeyRound, Pencil, Plus, UserCheck, UserX } from "lucide-react";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Avatar, readUserAvatar, writeUserAvatar } from "@/components/avatar";
+import { Avatar, readUserAvatarsMap, writeUserAvatar } from "@/components/avatar";
 import { PinInput } from "@/components/pin-pad";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,16 @@ import { useLang } from "@/lib/use-language";
 import { DuplicateRoleDialog, RoleDialog } from "./RoleDialog";
 
 type Errors = Partial<Record<string, string>>;
+
+function getSavedAvatar(userId: string): string | null {
+  try {
+    const map = readUserAvatarsMap();
+    const val = map[userId];
+    return typeof val === "string" && val.length > 0 ? val : null;
+  } catch {
+    return null;
+  }
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -330,7 +340,7 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
   const [pin, setPin] = useState("");
   const [pinConfirm, setPinConfirm] = useState("");
   const [avatarDraft, setAvatarDraft] = useState<string | null>(() =>
-    user ? readUserAvatar(user.id) : null,
+    user ? getSavedAvatar(user.id) : null,
   );
   const [errors, setErrors] = useState<Errors>({});
   const mutation = user ? update : create;
@@ -629,7 +639,7 @@ function PinDialog({ user, onClose }: { user: User; onClose: () => void }) {
           <PinInput id="change-pin" value={pin} onChange={setPin} />
         </Field>
         <Field id="change-pin-confirm" label={t("settings:users.pinConfirm")} error={errorOf("pinConfirm")}>
-          <PinInput id="change-pin-confirm" value={confirm} onChange={setPinConfirm} />
+          <PinInput id="change-pin-confirm" value={confirm} onChange={setConfirm} />
         </Field>
       </div>
       {setUserPin.error ? (
