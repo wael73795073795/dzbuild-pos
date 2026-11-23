@@ -192,10 +192,10 @@ export function ManagerApprovalDialog({
             return;
           }
 
-          const ownerTile = others.find((tile) => tile.isOwner) ?? approver ?? others[0] ?? null;
+          const ownerTile = approver ?? others[0] ?? null;
           if (!ownerTile) {
             beep("error");
-            setBarcodeError("لا يوجد حساب مالك متاح للموافقة");
+            setBarcodeError("لا يوجد حساب معتمد متاح للموافقة");
             return;
           }
 
