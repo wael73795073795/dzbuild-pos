@@ -56,7 +56,7 @@ function generateNumericOwnerBarcode(length = 16): string {
     const buf = new Uint32Array(safeLength);
     globalThis.crypto.getRandomValues(buf);
     for (let i = 0; i < safeLength; i += 1) {
-      digits.push(String(buf[i] % 10));
+      digits.push(String((buf[i] ?? 0) % 10));
     }
   } else {
     for (let i = 0; i < safeLength; i += 1) {
@@ -64,8 +64,9 @@ function generateNumericOwnerBarcode(length = 16): string {
     }
   }
 
-  if (digits.every((d) => d === digits[0])) {
-    digits[digits.length - 1] = digits[0] === "9" ? "1" : String(Number(digits[0]) + 1);
+  const firstDigit = digits[0] ?? "0";
+  if (digits.length > 0 && digits.every((d) => d === firstDigit)) {
+    digits[digits.length - 1] = firstDigit === "9" ? "1" : String(Number(firstDigit) + 1);
   }
 
   return digits.join("");
@@ -137,9 +138,9 @@ function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: b
   ];
 
   for (const ch of code) {
-    const pattern = digitPatterns[ch] ?? digitPatterns["0"];
+    const pattern = digitPatterns[ch] ?? digitPatterns["0"] ?? "11121211";
     for (let i = 0; i < pattern.length; i += 1) {
-      const units = Number(pattern[i]) || 1;
+      const units = Number(pattern[i] ?? "1") || 1;
       bars.push({
         widthPx: units * 2,
         dark: i % 2 === 0,
