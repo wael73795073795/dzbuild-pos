@@ -1,8 +1,8 @@
 import { Copy, KeyRound, Pencil, Plus, UserCheck, UserX } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Avatar } from "@/components/avatar";
+import { Avatar, readUserAvatar, writeUserAvatar } from "@/components/avatar";
 import { PinInput } from "@/components/pin-pad";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,59 @@ import { useLang } from "@/lib/use-language";
 import { DuplicateRoleDialog, RoleDialog } from "./RoleDialog";
 
 type Errors = Partial<Record<string, string>>;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Invalid data URL"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToAvatarDataUrl(file: File, maxSize = 256): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("Image decode not supported"));
+      el.src = objectUrl;
+    });
+
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    if (!width || !height) {
+      return await readFileAsDataUrl(file);
+    }
+
+    const side = Math.min(width, height);
+    const sx = (width - side) / 2;
+    const sy = (height - side) / 2;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = maxSize;
+    canvas.height = maxSize;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return await readFileAsDataUrl(file);
+    }
+
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
+    try {
+      return canvas.toDataURL("image/jpeg", 0.85);
+    } catch {
+      return await readFileAsDataUrl(file);
+    }
+  } catch {
+    return await readFileAsDataUrl(file);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 export function UsersSettings({ session }: { session: Session }) {
   const { t } = useTranslation();
@@ -81,7 +134,7 @@ export function UsersSettings({ session }: { session: Session }) {
                 <tr key={u.id} className="h-12 border-t border-line even:bg-surface-2">
                   <td>
                     <span className="flex items-center gap-2">
-                      <Avatar name={u.displayName} />
+                      <Avatar name={u.displayName} userId={u.id} />
                       <span className="font-semibold">{u.displayName}</span>
                       {u.id === session.userId ? (
                         <span className="text-ink-2">{t("common:status.you")}</span>
@@ -266,6 +319,7 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
   const errorText = useErrorText();
   const create = useCreateUser();
   const update = useUpdateUser();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [username, setUsername] = useState("");
   const [roleId, setRoleId] = useState(
@@ -275,9 +329,34 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
   const [discount, setDiscount] = useState(formatPercentInput(user?.discountLimitBp ?? 0, lang));
   const [pin, setPin] = useState("");
   const [pinConfirm, setPinConfirm] = useState("");
+  const [avatarDraft, setAvatarDraft] = useState<string | null>(() =>
+    user ? readUserAvatar(user.id) : null,
+  );
   const [errors, setErrors] = useState<Errors>({});
   const mutation = user ? update : create;
   const errorOf = useFieldError(errors);
+
+  const handleAvatarPick = async (file?: File) => {
+    if (!file) return;
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarDraft(dataUrl);
+      if (user) {
+        writeUserAvatar(user.id, dataUrl);
+        toast.success("تم حفظ صورة المستخدم");
+      }
+    } catch {
+      toast.error("تعذر تحميل الصورة");
+    }
+  };
+
+  const handleAvatarRemove = () => {
+    setAvatarDraft(null);
+    if (user) {
+      writeUserAvatar(user.id, null);
+      toast.success("تمت إزالة صورة المستخدم");
+    }
+  };
 
   const save = () => {
     const bp = parsePercentBp(discount);
@@ -292,6 +371,7 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
         { id: user.id, input: { ...base, active: user.active } },
         {
           onSuccess: () => {
+            writeUserAvatar(user.id, avatarDraft);
             toast.success(t("settings:users.updated"));
             onClose();
           },
@@ -301,7 +381,13 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
       create.mutate(
         { ...base, username: username.trim() === "" ? null : username.trim(), pin },
         {
-          onSuccess: () => {
+          onSuccess: (created) => {
+            const createdRecord = created as unknown as Record<string, unknown> | undefined;
+            const createdId =
+              createdRecord && typeof createdRecord.id === "string" ? createdRecord.id : null;
+            if (createdId && avatarDraft) {
+              writeUserAvatar(createdId, avatarDraft);
+            }
             toast.success(t("settings:users.created"));
             onClose();
           },
@@ -328,6 +414,29 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
         </>
       }
     >
+      <div className="flex flex-wrap items-center gap-4 rounded-control border border-line bg-surface-2 p-3">
+        <Avatar name={displayName.trim() || "?"} src={avatarDraft} size="lg" />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,.heic,.heif,.avif,.webp,.bmp,.ico,.tif,.tiff,.svg"
+            className="hidden"
+            onChange={(event) => {
+              void handleAvatarPick(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+          <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+            اختيار صورة للمستخدم
+          </Button>
+          {avatarDraft ? (
+            <Button type="button" variant="ghost" onClick={handleAvatarRemove}>
+              إزالة الصورة
+            </Button>
+          ) : null}
+        </div>
+      </div>
       <Field id="user-name" label={t("settings:users.displayName")} error={errorOf("displayName")}>
         <Input
           id="user-name"
@@ -520,7 +629,7 @@ function PinDialog({ user, onClose }: { user: User; onClose: () => void }) {
           <PinInput id="change-pin" value={pin} onChange={setPin} />
         </Field>
         <Field id="change-pin-confirm" label={t("settings:users.pinConfirm")} error={errorOf("pinConfirm")}>
-          <PinInput id="change-pin-confirm" value={confirm} onChange={setConfirm} />
+          <PinInput id="change-pin-confirm" value={confirm} onChange={setPinConfirm} />
         </Field>
       </div>
       {setUserPin.error ? (
