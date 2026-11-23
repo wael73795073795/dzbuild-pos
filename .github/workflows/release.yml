@@ -35,6 +35,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.plan.outputs.version }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      release_title: ${{ steps.plan.outputs.release_title }}
       arches: ${{ steps.plan.outputs.arches }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
       skip: ${{ steps.existing.outputs.skip }}
@@ -67,6 +69,8 @@ jobs:
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
           ARCH_INPUT: ${{ inputs.arch }}
           PRERELEASE_INPUT: ${{ inputs.prerelease }}
         run: |
@@ -90,12 +94,25 @@ jobs:
           if [[ "$version" == *-* ]] || [ "$PRERELEASE_INPUT" = "true" ]; then prerelease=true; fi
           test -f "src/release-notes/$version.json" || { echo "::error::src/release-notes/$version.json is missing"; exit 1; }
           node scripts/release/notes-for-tag.mjs "v$version" > /dev/null
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            clean_branch="$(printf '%s' "$REF_NAME" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+            [ -n "$clean_branch" ] || clean_branch="build"
+            release_tag="v${version}-r${RUN_NUMBER}-${clean_branch}"
+            release_title="DZBuild POS ${version} (Run #${RUN_NUMBER} - ${REF_NAME})"
+          else
+            release_tag="v$version"
+            release_title="DZBuild POS $version"
+          fi
+
           {
             echo "version=$version"
+            echo "release_tag=$release_tag"
+            echo "release_title=$release_title"
             echo "arches=$arches"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
-          echo "DZBuild POS $version: arches $arches, prerelease $prerelease" >> "$GITHUB_STEP_SUMMARY"
+          echo "DZBuild POS $version ($release_tag): arches $arches, prerelease $prerelease" >> "$GITHUB_STEP_SUMMARY"
 
   installers:
     name: Installers (${{ matrix.arch }})
@@ -161,7 +178,11 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
       PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      EVENT_NAME: ${{ github.event_name }}
+      RUN_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -192,11 +213,22 @@ jobs:
             $sources = @(Get-ChildItem $root -Directory | Sort-Object Name | ForEach-Object { $_.FullName })
             node scripts/release/collect.mjs $env:VERSION @sources
           }
+          if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            $outDir = "dist-release/$env:VERSION"
+            Get-ChildItem -Path $outDir -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object {
+              $newName = "$($_.BaseName)-r$($env:RUN_NUMBER)$($_.Extension)"
+              Rename-Item -LiteralPath $_.FullName -NewName $newName
+            }
+          }
       - name: Update manifests (pnpm release:manifest)
         shell: pwsh
         env:
           DZPOS_SIGN_PROVIDER: ${{ secrets.DZPOS_SIGN_PROVIDER }}
         run: |
+          if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            Write-Output "::notice::Skipping updater manifest generation for workflow_dispatch run."
+            exit 0
+          }
           $sig = "dist-release/$env:VERSION/DZBuildPOS-$env:VERSION-setup.exe.sig"
           if (-not (Test-Path -LiteralPath $sig)) {
             Write-Output "::notice::No updater signature (TAURI_SIGNING_PRIVATE_KEY not set): no update manifest for $env:VERSION."
@@ -219,7 +251,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v$env:VERSION"
+          $tag = $env:RELEASE_TAG
           $notes = Join-Path $env:RUNNER_TEMP "release-notes.md"
           $files = @(Get-ChildItem "dist-release/$env:VERSION" -File | ForEach-Object { $_.FullName })
           if (Test-Path "dist-release/$env:VERSION/updates") {
@@ -235,12 +267,11 @@ jobs:
             if ($draft -ne "true") { throw "$tag is already published; bump the version for a new release" }
             gh release upload $tag @files --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft --title "DZBuild POS $env:VERSION" --notes-file $notes --prerelease=$($pre.ToString().ToLower())
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft --title $env:RELEASE_TITLE --notes-file $notes --prerelease=$($pre.ToString().ToLower())
           } else {
             $flags = @()
             if ($pre) { $flags += "--prerelease" }
-            gh release create $tag @files --draft --target $env:GITHUB_SHA --title "DZBuild POS $env:VERSION" --notes-file $notes --repo $env:GITHUB_REPOSITORY @flags
+            gh release create $tag @files --draft --target $env:GITHUB_SHA --title $env:RELEASE_TITLE --notes-file $notes --repo $env:GITHUB_REPOSITORY @flags
           }
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          "Draft release $tag ready: $($files.Count) files" >> $env:GITHUB_STEP_SUMMARY
-          
+          "Release $tag ready: $($files.Count) files" >> $env:GITHUB_STEP_SUMMARY
