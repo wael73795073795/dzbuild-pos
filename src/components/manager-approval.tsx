@@ -1,4 +1,4 @@
-import { ScanBarcode, ShieldCheck } from "lucide-react";
+import { KeyRound, ScanBarcode, ShieldCheck } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -115,6 +115,8 @@ export function ManagerApprovalDialog({
   const lastKeyTimeRef = useRef<number>(0);
 
   const others = (tiles.data ?? []).filter((tile) => tile.id !== session?.userId);
+  const permissionLabel = t(`auth:permissions.${permission}`);
+  const hasPermissionAlready = Boolean(session?.permissions?.includes(permission));
 
   const submitWith = useCallback(
     (targetApprover: UserTile, credential: string, fromBarcode: boolean) => {
@@ -227,16 +229,28 @@ export function ManagerApprovalDialog({
         if (!open) onCancel();
       }}
       title={t("auth:approval.title")}
-      description={t("auth:approval.why", { permission: t(`auth:permissions.${permission}`) })}
+      description={t("auth:approval.why", { permission: permissionLabel })}
       footer={
         <Button variant="outline" onClick={onCancel}>
           {t("common:actions.cancel")}
         </Button>
       }
     >
-      <div className="mb-3 flex items-center gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-sm text-ink-2">
-        <ScanBarcode aria-hidden className="size-4 shrink-0 text-primary" />
-        <span>امسح باركود المالك للموافقة الفورية على هذه العملية فقط، أو اختر الحساب وأدخل الـ PIN.</span>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-sm">
+        <div className="flex min-w-0 items-center gap-2 text-ink-2">
+          <ScanBarcode aria-hidden className="size-4 shrink-0 text-primary" />
+          <span>امسح باركود المالك للموافقة الفورية على هذه العملية فقط، أو اختر الحساب وأدخل الـ PIN.</span>
+        </div>
+        <span
+          className={
+            hasPermissionAlready
+              ? "inline-flex items-center gap-1 rounded-full bg-info-soft px-2.5 py-0.5 text-xs font-semibold text-info"
+              : "inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning"
+          }
+        >
+          <KeyRound aria-hidden className="size-3.5" />
+          {hasPermissionAlready ? `صلاحية مفعلة: ${permissionLabel}` : `موافقة المالك: ${permissionLabel}`}
+        </span>
       </div>
 
       {barcodeError ? (
