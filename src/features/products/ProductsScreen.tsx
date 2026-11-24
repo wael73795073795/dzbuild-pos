@@ -1,9 +1,10 @@
 import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { BadgePercent, PencilLine, Plus, Printer, Tag, Tags, TrendingUp } from "lucide-react";
+import { BadgePercent, PencilLine, Plus, Printer, Tag, Tags, Trash2, TrendingUp } from "lucide-react";
 import { type ReactNode, Suspense, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
+import { toast } from "sonner";
 import { Amount } from "@/components/amount";
 import { ExportMenu } from "@/components/data-table/export-menu";
 import { ScanInput } from "@/components/scan-input";
@@ -23,11 +24,12 @@ import {
 import { useCategories } from "@/lib/ipc/catalog";
 import { useTillLink } from "@/lib/ipc/lan";
 import { usePackState } from "@/lib/ipc/pack-state";
-import { useProduct, useProductCatalog, useProductSearch } from "@/lib/ipc/products";
+import { useArchiveProduct, useProduct, useProductCatalog, useProductSearch } from "@/lib/ipc/products";
 import type { ArchiveFilter, Module, Permission, ProductHit, Session } from "@/lib/ipc/types";
 import { localizedName } from "@/lib/names";
 import { formatQty } from "@/lib/numeric";
 import { useDebounced } from "@/lib/use-debounced";
+import { useErrorText } from "@/lib/use-error-text";
 import { useLang } from "@/lib/use-language";
 import { cn } from "@/lib/utils";
 import { BulkEditDialog } from "./BulkEditDialog";
@@ -131,6 +133,8 @@ export function ProductsScreen({ session }: { session: Session }) {
 function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) {
   const { t } = useTranslation();
   const lang = useLang();
+  const errorText = useErrorText();
+  const deleteOrArchive = useArchiveProduct();
   const [text, setText] = useState("");
   const [category, setCategory] = useState("");
   const [archived, setArchived] = useState<ArchiveFilter>("active");
@@ -138,6 +142,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [bulk, setBulk] = useState<"price" | "edit" | "labels" | null>(null);
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [deletingTicked, setDeletingTicked] = useState(false);
   const query = useDebounced(text.trim(), 200);
   const categories = (useCategories().data ?? []).filter((c) => !c.archived);
   const search = useProductSearch(
@@ -163,6 +168,44 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const canExport = session.permissions.includes("products.view");
   const selects = canEdit || canPrice || canLabel;
   const allTicked = rows.length > 0 && rows.every((r) => ticked.has(r.id));
+
+  const handleDeleteSelected = async () => {
+    const ids = [...ticked];
+    if (ids.length === 0 || deletingTicked) return;
+    const confirmed = window.confirm(`هل أنت متأكد من حذف الأصناف المحددة (${ids.length})؟`);
+    if (!confirmed) return;
+
+    setDeletingTicked(true);
+    const removedIds = new Set<string>();
+    try {
+      for (const id of ids) {
+        await new Promise<void>((resolve, reject) => {
+          deleteOrArchive.mutate(id, {
+            onSuccess: () => {
+              removedIds.add(id);
+              resolve();
+            },
+            onError: (err) => reject(err),
+          });
+        });
+      }
+      setTicked(new Set());
+      toast.success(`تم حذف ${removedIds.size} صنف بنجاح`);
+    } catch (err) {
+      if (removedIds.size > 0) {
+        setTicked((prev) => {
+          const next = new Set(prev);
+          for (const id of removedIds) next.delete(id);
+          return next;
+        });
+        toast.success(`تم حذف ${removedIds.size} صنف قبل توقف العملية`);
+      }
+      toast.error(errorText(err));
+    } finally {
+      setDeletingTicked(false);
+    }
+  };
+
   const columns = useMemo(
     () =>
       helper.columns([
@@ -270,10 +313,20 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
             </Button>
           ) : null}
           {canEdit && ticked.size > 0 ? (
-            <Button variant="outline" onClick={() => setBulk("edit")}>
-              <PencilLine aria-hidden />
-              {t("products:actions.bulkEdit", { count: ticked.size })}
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => setBulk("edit")}>
+                <PencilLine aria-hidden />
+                {t("products:actions.bulkEdit", { count: ticked.size })}
+              </Button>
+              <Button
+                variant="danger"
+                disabled={deletingTicked || deleteOrArchive.isPending}
+                onClick={() => void handleDeleteSelected()}
+              >
+                <Trash2 aria-hidden />
+                حذف ({ticked.size})
+              </Button>
+            </>
           ) : null}
           {canPrice ? (
             <Button variant="outline" onClick={() => setBulk("price")}>
