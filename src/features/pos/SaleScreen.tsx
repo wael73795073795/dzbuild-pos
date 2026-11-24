@@ -621,12 +621,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }, 0);
   };
 
+  void priced;
   const selectedLine = selected !== null ? lines[selected] : undefined;
-  const selectedPriced = selected !== null ? priced[selected] : undefined;
   const selectedSubtotal =
     selectedLine !== undefined
-      ? (selectedPriced?.lineTotal ??
-        Math.round((selectedLine.display.price * selectedLine.line.qty) / 1_000))
+      ? Math.round((selectedLine.display.price * selectedLine.line.qty) / 1_000)
       : 0;
   const needsOwnerApproval = !can("sales.void_line");
 
