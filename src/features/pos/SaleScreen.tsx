@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Clock,
   KeyRound,
   Loader2,
   Lock,
@@ -81,6 +82,10 @@ const VOUCHER_MODULES: Module[] = ["gift_vouchers", "loyalty", "orders", "repair
 /** The department keys stay in place of the product grid on this till once chosen (VRT-001). */
 const DEPARTMENTS_KEY = "dzpos.till.departments";
 
+const CART_TRACK_CAPACITY = 20;
+const PAUSE_WAIT_THRESHOLD_MS = 12_000;
+const IDLE_ROAM_THRESHOLD_MS = 20_000;
+
 function rememberedDepartments(): boolean {
   try {
     return window.localStorage.getItem(DEPARTMENTS_KEY) === "1";
@@ -95,6 +100,57 @@ function rememberDepartments(on: boolean): void {
   } catch {
     // a blocked storage only forgets the choice at the next start
   }
+}
+
+function SupermarketCartIcon({
+  fillRatio,
+  roaming,
+  justAdded,
+}: {
+  fillRatio: number;
+  roaming: boolean;
+  justAdded: boolean;
+}) {
+  const clamped = Math.max(0, Math.min(1, fillRatio));
+  const fillHeight = Math.round(clamped * 9);
+  const fillY = 12 - fillHeight;
+  const nearFull = !roaming && clamped >= 0.85;
+
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className={cn(
+        "h-6 w-7 shrink-0 transition-transform duration-300",
+        roaming && "animate-pulse",
+        justAdded && "scale-110",
+      )}
+      aria-hidden="true"
+    >
+      {clamped > 0 ? (
+        <rect
+          x="8.5"
+          y={fillY}
+          width="11"
+          height={fillHeight}
+          rx="1.5"
+          className={cn(
+            "transition-all duration-300",
+            nearFull ? "fill-success/80" : "fill-primary/70",
+          )}
+        />
+      ) : null}
+      <path
+        d="M2.5 3.5h3.2l2.4 11.2a2 2 0 0 0 2 1.6h10.4a2 2 0 0 0 1.95-1.55L24.5 7H7.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="10.5" cy="20" r="1.7" fill="currentColor" />
+      <circle cx="20.5" cy="20" r="1.7" fill="currentColor" />
+    </svg>
+  );
 }
 
 /** `/pos` (spec §10.5): full window, keyboard-first and barcode-first (UX-010, UX-016, SAL-012).
@@ -167,6 +223,49 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const scanRef = useRef<HTMLInputElement>(null);
   const docLang = company.data?.defaultDocLang ?? session.lang;
   const empty = lines.length === 0;
+
+  // Ambient supermarket cart track state: 0..100% cycle progress, pause waiting alert, and idle roaming
+  const prevLinesLengthRef = useRef<number>(lines.length);
+  const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
+  const [waitingForNextItem, setWaitingForNextItem] = useState(false);
+  const [idleRoaming, setIdleRoaming] = useState(false);
+  const [roamPercent, setRoamPercent] = useState(0);
+  const [justAddedPulse, setJustAddedPulse] = useState(false);
+
+  useEffect(() => {
+    const grew = lines.length > prevLinesLengthRef.current;
+    prevLinesLengthRef.current = lines.length;
+    setLastActivityAt(Date.now());
+    setWaitingForNextItem(false);
+    setIdleRoaming(false);
+    setRoamPercent(0);
+
+    if (!grew) return;
+    setJustAddedPulse(true);
+    const pulseTimer = window.setTimeout(() => {
+      setJustAddedPulse(false);
+    }, 650);
+    return () => window.clearTimeout(pulseTimer);
+  }, [lines.length]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const elapsed = Date.now() - lastActivityAt;
+      const hasOpenCart = lines.length > 0;
+      setWaitingForNextItem(hasOpenCart && elapsed >= PAUSE_WAIT_THRESHOLD_MS);
+
+      const shouldRoam = !hasOpenCart && dialog === null && !approval.pending && elapsed >= IDLE_ROAM_THRESHOLD_MS;
+      setIdleRoaming(shouldRoam);
+      if (shouldRoam) {
+        const nextRandom = Math.round(8 + Math.random() * 68);
+        setRoamPercent(nextRandom);
+      } else {
+        setRoamPercent(0);
+      }
+    }, 2500);
+
+    return () => window.clearInterval(timer);
+  }, [approval.pending, dialog, lastActivityAt, lines.length]);
 
   // an empty cart (a new sale) takes the shop's document language again, whatever the last
   // receipt was printed in
@@ -629,6 +728,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       : 0;
   const needsOwnerApproval = !can("sales.void_line");
 
+  const itemCount = lines.length;
+  const cycleStep = itemCount === 0 ? 0 : ((itemCount - 1) % CART_TRACK_CAPACITY) + 1;
+  const cyclePercent = itemCount === 0 ? 0 : Math.round((cycleStep / CART_TRACK_CAPACITY) * 100);
+  const trackPercent = idleRoaming ? roamPercent : cyclePercent;
+  const cartFillRatio = idleRoaming ? 0 : cycleStep / CART_TRACK_CAPACITY;
+
   const closed = till.isSuccess && till.data === null;
   const closedView = (
     <div className="grid flex-1 place-items-center p-6">
@@ -730,6 +835,36 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               }}
               onMove={(delta) => useCart.getState().move(delta)}
             />
+            <div
+              className={cn(
+                "relative flex h-9 items-center overflow-hidden rounded-control border border-line bg-surface-2/70 px-3 transition-colors",
+                justAddedPulse && "border-primary/50 bg-surface-2",
+              )}
+            >
+              <div className="pointer-events-none absolute inset-x-3 top-1/2 h-0.5 -translate-y-1/2 bg-line/60" />
+              <div
+                className="relative z-10 flex items-center gap-1.5 text-ink transition-all duration-500 ease-out"
+                style={{ marginInlineStart: `${trackPercent}%` }}
+              >
+                <SupermarketCartIcon
+                  fillRatio={cartFillRatio}
+                  roaming={idleRoaming}
+                  justAdded={justAddedPulse}
+                />
+                <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold text-ink-2">
+                  {idleRoaming ? "خمول" : `${cyclePercent}%`}
+                </span>
+              </div>
+              {waitingForNextItem ? (
+                <span
+                  role="status"
+                  className="ms-auto inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning animate-pulse"
+                >
+                  <Clock aria-hidden className="h-3.5 w-3.5" />
+                  بانتظار الصنف التالي
+                </span>
+              ) : null}
+            </div>
             {selectedLine ? (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-danger/30 bg-surface-2/80 px-3 py-2 transition-colors">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
