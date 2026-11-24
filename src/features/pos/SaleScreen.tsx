@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Lock, Menu, Percent, Pause, Scale, Undo2, User, Wallet, X } from "lucide-react";
+import { Lock, Menu, Pause, Percent, Scale, Trash2, Undo2, User, Wallet, X } from "lucide-react";
 import { type PointerEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
@@ -350,6 +350,23 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [errorText, notify, recordEvent, runApproved],
   );
 
+  // Delete key on keyboard removes the selected line (with owner approval via voidLine),
+  // ignoring typing inside inputs/textareas/selects/contenteditable elements.
+  useEffect(() => {
+    if (dialog !== null || approval.pending || quickBusy) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Delete") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      const currentSelected = useCart.getState().selected;
+      if (currentSelected === null || !useCart.getState().lines[currentSelected]) return;
+      event.preventDefault();
+      void voidLine(currentSelected);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [approval.pending, dialog, quickBusy, voidLine]);
+
   // Lowering a line's quantity is a partial void (SAL-040): journaled with the backend's figures
   // and under `sales.void_line` before the line changes. `false` when refused or cancelled.
   const reduceQty = useCallback(
@@ -586,6 +603,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }, 0);
   };
 
+  const selectedLine = selected !== null ? lines[selected] : undefined;
+
   const closed = till.isSuccess && till.data === null;
   const closedView = (
     <div className="grid flex-1 place-items-center p-6">
@@ -687,6 +706,26 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               }}
               onMove={(delta) => useCart.getState().move(delta)}
             />
+            {selectedLine ? (
+              <div className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface px-3 py-2">
+                <span className="truncate font-semibold">
+                  {selectedLine.display.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={approval.pending || quickBusy}
+                  onClick={() => {
+                    if (selected !== null) void voidLine(selected);
+                  }}
+                  shortcut="Delete"
+                  shortcutLabel="Delete"
+                >
+                  <Trash2 aria-hidden />
+                  حذف
+                </Button>
+              </div>
+            ) : null}
             {notice ? (
               <p
                 role={notice.tone === "error" ? "alert" : "status"}
