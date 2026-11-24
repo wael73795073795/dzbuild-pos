@@ -1,5 +1,19 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Lock, Menu, Pause, Percent, Scale, Trash2, Undo2, User, Wallet, X } from "lucide-react";
+import {
+  KeyRound,
+  Loader2,
+  Lock,
+  Menu,
+  Pause,
+  Percent,
+  Scale,
+  ShieldCheck,
+  Trash2,
+  Undo2,
+  User,
+  Wallet,
+  X,
+} from "lucide-react";
 import { type PointerEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
@@ -24,6 +38,7 @@ import { formatAmountInput, formatDZD } from "@/lib/format";
 import { type Hotkey, useCtrlHotkey, useHotkeys } from "@/lib/hotkeys";
 import { DEFAULT_KEYS, type TillAction, ariaKey, keyLabel, useKeyMap } from "@/lib/key-map";
 import { localizedName } from "@/lib/names";
+import { formatQty } from "@/lib/numeric";
 import { useScanner } from "@/lib/scanner";
 import { BackupAlerts } from "@/app/BackupAlerts";
 import { DemoRibbon } from "@/app/DemoRibbon";
@@ -113,6 +128,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const fetchCustomer = useFetchCustomer();
   const quickPaying = useRef(false);
   const [quickBusy, setQuickBusy] = useState(false);
+  const [isVoiding, setIsVoiding] = useState(false);
   const lines = useCart((s) => s.lines);
   const priced = usePricedLines(lines, preview);
   const selected = useCart((s) => s.selected);
@@ -334,6 +350,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       if (!draft || journaling.current) return false;
       const event = { kind: "line_voided", cart: toCart(state), index } as const;
       journaling.current = true;
+      setIsVoiding(true);
       try {
         await runApproved(() => recordEvent.mutateAsync(event));
         const now = useCart.getState();
@@ -345,6 +362,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         return false;
       } finally {
         journaling.current = false;
+        setIsVoiding(false);
       }
     },
     [errorText, notify, recordEvent, runApproved],
@@ -353,7 +371,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // Delete key on keyboard removes the selected line (with owner approval via voidLine),
   // ignoring typing inside inputs/textareas/selects/contenteditable elements.
   useEffect(() => {
-    if (dialog !== null || approval.pending || quickBusy) return;
+    if (dialog !== null || approval.pending || quickBusy || isVoiding) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Delete") return;
       const target = event.target as HTMLElement | null;
@@ -365,7 +383,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [approval.pending, dialog, quickBusy, voidLine]);
+  }, [approval.pending, dialog, isVoiding, quickBusy, voidLine]);
 
   // Lowering a line's quantity is a partial void (SAL-040): journaled with the backend's figures
   // and under `sales.void_line` before the line changes. `false` when refused or cancelled.
@@ -604,6 +622,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   };
 
   const selectedLine = selected !== null ? lines[selected] : undefined;
+  const selectedPriced = selected !== null ? priced[selected] : undefined;
+  const selectedSubtotal =
+    selectedLine !== undefined
+      ? (selectedPriced?.lineTotal ??
+        Math.round((selectedLine.display.price * selectedLine.line.qty) / 1_000))
+      : 0;
+  const needsOwnerApproval = !can("sales.void_line");
 
   const closed = till.isSuccess && till.data === null;
   const closedView = (
@@ -707,23 +732,57 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               onMove={(delta) => useCart.getState().move(delta)}
             />
             {selectedLine ? (
-              <div className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface px-3 py-2">
-                <span className="truncate font-semibold">
-                  {selectedLine.display.name}
-                </span>
-                <Button
-                  type="button"
-                  variant="danger"
-                  disabled={approval.pending || quickBusy}
-                  onClick={() => {
-                    if (selected !== null) void voidLine(selected);
-                  }}
-                  shortcut="Delete"
-                  shortcutLabel="Delete"
-                >
-                  <Trash2 aria-hidden />
-                  حذف
-                </Button>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-danger/30 bg-surface-2/80 px-3 py-2 transition-colors">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="truncate font-semibold">{selectedLine.display.name}</span>
+                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-semibold text-ink-2">
+                    <bdi dir="ltr">
+                      {formatQty(selectedLine.line.qty, lang)} {selectedLine.display.unitCode}
+                    </bdi>
+                  </span>
+                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-bold text-ink">
+                    <Amount value={selectedSubtotal} />
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                      needsOwnerApproval
+                        ? "bg-warning-soft text-warning"
+                        : "bg-info-soft text-info",
+                    )}
+                  >
+                    {needsOwnerApproval ? (
+                      <>
+                        <KeyRound aria-hidden className="h-3.5 w-3.5" />
+                        موافقة المالك
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck aria-hidden className="h-3.5 w-3.5" />
+                        صلاحية مفعلة
+                      </>
+                    )}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    disabled={approval.pending || quickBusy || isVoiding}
+                    onClick={() => {
+                      if (selected !== null) void voidLine(selected);
+                    }}
+                    shortcut="Delete"
+                    shortcutLabel="Delete"
+                  >
+                    {isVoiding ? (
+                      <Loader2 aria-hidden className="animate-spin" />
+                    ) : (
+                      <Trash2 aria-hidden />
+                    )}
+                    حذف
+                  </Button>
+                </div>
               </div>
             ) : null}
             {notice ? (
