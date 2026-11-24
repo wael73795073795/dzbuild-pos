@@ -1,7 +1,8 @@
-import { History } from "lucide-react";
+import { History, Trash2 } from "lucide-react";
 import { Suspense, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { NumericInput } from "@/components/numeric-input";
 import { ScanInput } from "@/components/scan-input";
 import { Button } from "@/components/ui/button";
@@ -103,6 +104,7 @@ function ProductEditor({
   const create = useCreateProduct();
   const update = useUpdateProduct();
   const archive = useArchiveProduct();
+  const deleteCurrent = useArchiveProduct();
   const restore = useRestoreProduct();
   const duplicate = useDuplicateProduct();
   const setScale = useSetScaleItem();
@@ -158,6 +160,19 @@ function ProductEditor({
     } else create.mutate(input, { onSuccess: onClose });
   });
   const title = product ? localizedName(product, lang) : t("products:dialog.new");
+
+  const handleDeleteProduct = () => {
+    if (!product || deleteCurrent.isPending) return;
+    const confirmed = window.confirm(`هل أنت متأكد من حذف الصنف "${title}"؟`);
+    if (!confirmed) return;
+    deleteCurrent.mutate(product.id, {
+      onSuccess: () => {
+        toast.success(`تم حذف الصنف "${title}"`);
+        onClose();
+      },
+    });
+  };
+
   // M8: the medicine's tab while the pharmacy module is on, a variant model's stock grid while the
   // variant grid is, and a piece of jewellery (VRT-140: stocked one by one, a simple product or a
   // variant) while the jewellery module is
@@ -192,6 +207,7 @@ function ProductEditor({
     create.error ??
     update.error ??
     archive.error ??
+    deleteCurrent.error ??
     restore.error ??
     duplicate.error ??
     (scaleField ? null : setScale.error);
@@ -228,10 +244,18 @@ function ProductEditor({
                       {t("products:dialog.duplicate")}
                     </Button>
                     <Button
-                      variant="danger"
+                      variant="outline"
                       onClick={() => archive.mutate(product.id, { onSuccess: onClose })}
                     >
                       {t("products:dialog.archive")}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      disabled={deleteCurrent.isPending}
+                      onClick={handleDeleteProduct}
+                    >
+                      <Trash2 aria-hidden />
+                      حذف
                     </Button>
                   </>
                 )
