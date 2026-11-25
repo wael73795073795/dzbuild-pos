@@ -1,12 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Calculator,
   Clock,
+  Copy,
+  Delete,
+  Equal,
   KeyRound,
   Loader2,
   Lock,
   Menu,
   Pause,
   Percent,
+  Pin,
+  PinOff,
   Scale,
   ShieldCheck,
   Trash2,
@@ -81,6 +87,13 @@ const VOUCHER_MODULES: Module[] = ["gift_vouchers", "loyalty", "orders", "repair
 
 /** The department keys stay in place of the product grid on this till once chosen (VRT-001). */
 const DEPARTMENTS_KEY = "dzpos.till.departments";
+const SPLIT_WIDTH_KEY = "dzpos.till.splitWidth";
+const SPLIT_PINNED_KEY = "dzpos.till.splitPinned";
+
+const DEFAULT_LEFT_WIDTH = 520;
+const MIN_LEFT_WIDTH = 340;
+const MAX_LEFT_WIDTH = 780;
+const MIN_RIGHT_WIDTH = 420;
 
 const CART_TRACK_CAPACITY = 20;
 const PAUSE_WAIT_THRESHOLD_MS = 12_000;
@@ -100,6 +113,272 @@ function rememberDepartments(on: boolean): void {
   } catch {
     // a blocked storage only forgets the choice at the next start
   }
+}
+
+function rememberedSplitWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(SPLIT_WIDTH_KEY);
+    const parsed = raw ? Number(raw) : NaN;
+    if (Number.isFinite(parsed) && parsed >= MIN_LEFT_WIDTH && parsed <= MAX_LEFT_WIDTH) {
+      return parsed;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return DEFAULT_LEFT_WIDTH;
+}
+
+function rememberSplitWidth(width: number): void {
+  try {
+    window.localStorage.setItem(SPLIT_WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function rememberedSplitPinned(): boolean {
+  try {
+    return window.localStorage.getItem(SPLIT_PINNED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberSplitPinned(pinned: boolean): void {
+  try {
+    window.localStorage.setItem(SPLIT_PINNED_KEY, pinned ? "1" : "0");
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function evaluateBasicMath(expr: string): string {
+  const cleaned = expr.replace(/×/g, "*").replace(/÷/g, "/").replace(/\s+/g, "");
+  if (!cleaned) return "0";
+  if (!/^[0-9+\-*/().]+$/.test(cleaned)) return "خطأ";
+  try {
+    const fn = new Function(`"use strict"; return (${cleaned});`);
+    const result: unknown = fn();
+    if (typeof result !== "number" || !Number.isFinite(result)) return "خطأ";
+    const rounded = Math.round(result * 1_000_000) / 1_000_000;
+    return String(rounded);
+  } catch {
+    return "خطأ";
+  }
+}
+
+function PosCalculatorModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [expr, setExpr] = useState("");
+  const [display, setDisplay] = useState("0");
+
+  const appendToken = useCallback((token: string) => {
+    setExpr((prev) => {
+      const base = prev === "خطأ" ? "" : prev;
+      const next = `${base}${token}`;
+      setDisplay(next || "0");
+      return next;
+    });
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setExpr("");
+    setDisplay("0");
+  }, []);
+
+  const backspace = useCallback(() => {
+    setExpr((prev) => {
+      if (!prev || prev === "خطأ") {
+        setDisplay("0");
+        return "";
+      }
+      const next = prev.slice(0, -1);
+      setDisplay(next || "0");
+      return next;
+    });
+  }, []);
+
+  const calculate = useCallback(() => {
+    setExpr((prev) => {
+      const target = prev || display;
+      const res = evaluateBasicMath(target);
+      setDisplay(res);
+      return res === "خطأ" ? "" : res;
+    });
+  }, [display]);
+
+  const copyResult = useCallback(() => {
+    const val = display;
+    if (!val || val === "خطأ") return;
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(val).then(
+        () => toast.success(`تم نسخ النتيجة: ${val}`),
+        () => toast.info(`النتيجة: ${val}`),
+      );
+    } else {
+      toast.info(`النتيجة: ${val}`);
+    }
+  }, [display]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (/^[0-9.]$/.test(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        appendToken(e.key);
+        return;
+      }
+      if (["+", "-", "*", "/"].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        appendToken(e.key);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "=") {
+        e.preventDefault();
+        e.stopPropagation();
+        calculate();
+        return;
+      }
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        e.stopPropagation();
+        backspace();
+        return;
+      }
+      if (e.key === "Delete" || e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        e.stopPropagation();
+        clearAll();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [appendToken, backspace, calculate, clearAll, onClose, open]);
+
+  if (!open) return null;
+
+  const padButtons: Array<{ label: string; onClick: () => void; tone?: "op" | "eq" | "muted" }> = [
+    { label: "C", onClick: clearAll, tone: "muted" },
+    { label: "÷", onClick: () => appendToken("÷"), tone: "op" },
+    { label: "×", onClick: () => appendToken("×"), tone: "op" },
+    { label: "⌫", onClick: backspace, tone: "muted" },
+    { label: "7", onClick: () => appendToken("7") },
+    { label: "8", onClick: () => appendToken("8") },
+    { label: "9", onClick: () => appendToken("9") },
+    { label: "-", onClick: () => appendToken("-"), tone: "op" },
+    { label: "4", onClick: () => appendToken("4") },
+    { label: "5", onClick: () => appendToken("5") },
+    { label: "6", onClick: () => appendToken("6") },
+    { label: "+", onClick: () => appendToken("+"), tone: "op" },
+    { label: "1", onClick: () => appendToken("1") },
+    { label: "2", onClick: () => appendToken("2") },
+    { label: "3", onClick: () => appendToken("3") },
+    { label: "=", onClick: calculate, tone: "eq" },
+    { label: "0", onClick: () => appendToken("0") },
+    { label: "00", onClick: () => appendToken("00") },
+    { label: ".", onClick: () => appendToken(".") },
+  ];
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="آلة حاسبة"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-[320px] rounded-xl border border-line bg-surface p-3.5 text-ink shadow-xl">
+        <div className="mb-2.5 flex items-center justify-between border-b border-line pb-2">
+          <div className="flex items-center gap-2">
+            <Calculator aria-hidden className="size-4 text-brand" />
+            <span className="text-sm font-bold">آلة حاسبة</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={copyResult}
+              title="نسخ النتيجة"
+              aria-label="نسخ النتيجة"
+              className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
+            >
+              <Copy aria-hidden className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="إغلاق"
+              aria-label="إغلاق"
+              className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-danger-soft hover:text-danger"
+            >
+              <X aria-hidden className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-line bg-surface-2 px-3 py-2 text-end">
+          <div className="min-h-4 truncate text-xs text-ink-2" dir="ltr">
+            {expr || " "}
+          </div>
+          <div className="truncate text-2xl font-bold text-ink" dir="ltr">
+            {display}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-1.5" dir="ltr">
+          {padButtons.slice(0, 15).map((btn) => (
+            <button
+              key={btn.label}
+              type="button"
+              onClick={btn.onClick}
+              className={cn(
+                "flex h-11 items-center justify-center rounded-lg border text-base font-bold transition-colors",
+                btn.tone === "op" && "border-brand/40 bg-brand-soft text-brand",
+                btn.tone === "muted" && "border-line bg-surface-2 text-ink-2 hover:text-ink",
+                !btn.tone && "border-line bg-surface hover:bg-surface-2",
+              )}
+            >
+              {btn.label === "⌫" ? <Delete aria-hidden className="size-4" /> : btn.label}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            onClick={calculate}
+            className="row-span-2 flex items-center justify-center rounded-lg bg-brand text-lg font-bold text-brand-ink transition-opacity hover:opacity-95"
+            aria-label="يساوي"
+          >
+            <Equal aria-hidden className="size-5" />
+          </button>
+
+          {padButtons.slice(15).map((btn) => (
+            <button
+              key={btn.label}
+              type="button"
+              onClick={btn.onClick}
+              className="flex h-11 items-center justify-center rounded-lg border border-line bg-surface text-base font-bold transition-colors hover:bg-surface-2"
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SupermarketCartIcon({
@@ -199,6 +478,16 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const van = useExtras((s) => s.van);
   const [departmentsOn, setDepartmentsOn] = useState(rememberedDepartments);
   const departments = departmentsOn && modules.includes("department_keys");
+
+  // Resizable split between left POS/receipt panel and right products/search panel
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const [leftWidth, setLeftWidth] = useState<number>(rememberedSplitWidth);
+  const [splitPinned, setSplitPinned] = useState<boolean>(rememberedSplitPinned);
+  const [draggingSplit, setDraggingSplit] = useState(false);
+
+  // Calculator popover/modal state
+  const [calcOpen, setCalcOpen] = useState(false);
+
   // the sales history sends a ticket to take items back from (RET-002); the repair board, a ready
   // ticket to hand back (M8, `{ pickup: ticketId }`); an order's page, the order to serve (M8,
   // `{ fulfil: orderId }`)
@@ -232,6 +521,63 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [roamPercent, setRoamPercent] = useState(0);
   const [justAddedPulse, setJustAddedPulse] = useState(false);
 
+  const clampLeftWidth = useCallback((desired: number): number => {
+    const containerWidth = splitContainerRef.current?.clientWidth ?? window.innerWidth;
+    const maxAllowedByViewport = Math.max(MIN_LEFT_WIDTH, containerWidth - MIN_RIGHT_WIDTH);
+    const upper = Math.min(MAX_LEFT_WIDTH, maxAllowedByViewport);
+    return Math.max(MIN_LEFT_WIDTH, Math.min(upper, desired));
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      setLeftWidth((prev) => clampLeftWidth(prev));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clampLeftWidth]);
+
+  const togglePin = useCallback(() => {
+    setSplitPinned((prev) => {
+      const next = !prev;
+      rememberSplitPinned(next);
+      return next;
+    });
+  }, []);
+
+  const handleDividerPointerDown = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (splitPinned) {
+        toast.info("التقسيم مثبت — فك الدبوس أولاً لتغيير العرض");
+        return;
+      }
+      e.preventDefault();
+      setDraggingSplit(true);
+      const startX = e.clientX;
+      const startWidth = clampLeftWidth(leftWidth);
+      const isRtl = document.dir === "rtl" || window.getComputedStyle(document.body).direction === "rtl";
+
+      const onMove = (moveEvent: globalThis.PointerEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const nextWidth = clampLeftWidth(isRtl ? startWidth - deltaX : startWidth + deltaX);
+        setLeftWidth(nextWidth);
+      };
+
+      const onUp = (upEvent: globalThis.PointerEvent) => {
+        const deltaX = upEvent.clientX - startX;
+        const finalWidth = clampLeftWidth(isRtl ? startWidth - deltaX : startWidth + deltaX);
+        setLeftWidth(finalWidth);
+        rememberSplitWidth(finalWidth);
+        setDraggingSplit(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [clampLeftWidth, leftWidth, splitPinned],
+  );
+
   useEffect(() => {
     const grew = lines.length > prevLinesLengthRef.current;
     prevLinesLengthRef.current = lines.length;
@@ -254,7 +600,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       const hasOpenCart = lines.length > 0;
       setWaitingForNextItem(hasOpenCart && elapsed >= PAUSE_WAIT_THRESHOLD_MS);
 
-      const shouldRoam = !hasOpenCart && dialog === null && !approval.pending && elapsed >= IDLE_ROAM_THRESHOLD_MS;
+      const shouldRoam =
+        !hasOpenCart && dialog === null && !calcOpen && !approval.pending && elapsed >= IDLE_ROAM_THRESHOLD_MS;
       setIdleRoaming(shouldRoam);
       if (shouldRoam) {
         const nextRandom = Math.round(8 + Math.random() * 68);
@@ -265,7 +612,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }, 2500);
 
     return () => window.clearInterval(timer);
-  }, [approval.pending, dialog, lastActivityAt, lines.length]);
+  }, [approval.pending, calcOpen, dialog, lastActivityAt, lines.length]);
 
   // an empty cart (a new sale) takes the shop's document language again, whatever the last
   // receipt was printed in
@@ -275,8 +622,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   // focus returns to the scan field whenever no dialog holds it (UX-010)
   useEffect(() => {
-    if (dialog === null && !approval.pending) scanRef.current?.focus();
-  }, [dialog, approval.pending]);
+    if (dialog === null && !calcOpen && !approval.pending) scanRef.current?.focus();
+  }, [approval.pending, calcOpen, dialog]);
 
   // the ticket sent by the sales history (or the repair board, or an order's page) is consumed: the
   // screen mounting again on this history entry (after a lock, say) does not open it a second time
@@ -413,7 +760,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // elsewhere the cashier is told to close the dialog first. The return and price-check dialogs
   // read scans in their own fields (`ScanInput`).
   const onScan = (code: string) => {
-    if (approval.pending) return;
+    if (approval.pending || calcOpen) return;
     // the "one method" checkout is finishing the cart on screen: a code read now would be lost
     if (quickPaying.current) {
       beep("error");
@@ -430,10 +777,10 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }
   };
   const ownScanField = dialog?.kind === "return" || dialog?.kind === "price" || dialog?.kind === "quote";
-  useScanner(onScan, { ...scanner, enabled: till.data !== null && !ownScanField });
+  useScanner(onScan, { ...scanner, enabled: till.data !== null && !ownScanField && !calcOpen });
   // a scanner in USB-COM mode reads into the same lookup (HW-020); a dialog that reads its own
   // scans gets them in its scan field instead
-  useSerialScans(onScan, till.data !== null && !ownScanField);
+  useSerialScans(onScan, till.data !== null && !ownScanField && !calcOpen);
   useCustomerDisplayFeed(dialog?.kind === "scale" ? weighing : null);
 
   // Voids and cancellations send the cart as it stands and the backend values it (AUD-001): a
@@ -470,7 +817,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // Delete key on keyboard removes the selected line (with owner approval via voidLine),
   // ignoring typing inside inputs/textareas/selects/contenteditable elements.
   useEffect(() => {
-    if (dialog !== null || approval.pending || quickBusy || isVoiding) return;
+    if (dialog !== null || calcOpen || approval.pending || quickBusy || isVoiding) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Delete") return;
       const target = event.target as HTMLElement | null;
@@ -482,7 +829,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [approval.pending, dialog, isVoiding, quickBusy, voidLine]);
+  }, [approval.pending, calcOpen, dialog, isVoiding, quickBusy, voidLine]);
 
   // Lowering a line's quantity is a partial void (SAL-040): journaled with the backend's figures
   // and under `sales.void_line` before the line changes. `false` when refused or cancelled.
@@ -665,7 +1012,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const bound = (Object.keys(DEFAULT_KEYS) as TillAction[]).filter((action) => handlers[action]);
   const hotkeys: Partial<Record<Hotkey, () => void>> = { F11: () => setDialog({ kind: "scale" }) };
   for (const action of bound) hotkeys[keys[action]] = handlers[action];
-  useHotkeys(hotkeys, dialog === null && !approval.pending && !quickBusy);
+  useHotkeys(hotkeys, dialog === null && !calcOpen && !approval.pending && !quickBusy);
   /** A button's keycap from the key map. */
   const cap = (action: TillAction) => ({
     shortcut: ariaKey(keys[action]),
@@ -675,7 +1022,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   useCtrlHotkey(
     "d",
     () => openDialog({ kind: "quote" }),
-    dialog === null && !approval.pending && can("sales.create"),
+    dialog === null && !calcOpen && !approval.pending && can("sales.create"),
   );
 
   const ctx: PosContext = {
@@ -712,7 +1059,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // Focus goes back to the scan field after every tap on the screen (a tile, a line, a chip), so
   // the keyboard model (+, -, *, Del, typed codes) keeps working (UX-010).
   const refocus = (event: PointerEvent<HTMLDivElement>) => {
-    if (dialog !== null || approval.pending) return;
+    if (dialog !== null || calcOpen || approval.pending || draggingSplit) return;
     const target = event.target as HTMLElement;
     if (target.closest("input, textarea, select, [contenteditable='true']")) return;
     window.setTimeout(() => {
@@ -758,7 +1105,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     </div>
   );
 
-  const pos = "min-h-14 flex-col gap-0.5 px-2 text-[1.125rem] [&_kbd]:ms-0";
+  const pos = "min-h-12 w-full flex-col gap-0.5 px-1.5 text-sm [&_kbd]:ms-0";
   const actions = (
     <>
       <Button className={pos} onClick={() => setDialog({ kind: "customer" })} {...cap("customer")}>
@@ -797,7 +1144,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // One tree for the open and the closed till, so the backup alerts (the "database damaged"
   // alert above all) keep their place and state when the till's state arrives.
   return (
-    <div className="flex h-dvh flex-col bg-bg text-[1.125rem] text-ink" onPointerUp={refocus}>
+    <div
+      className={cn(
+        "flex h-dvh flex-col bg-bg text-[1.125rem] text-ink",
+        draggingSplit && "select-none",
+      )}
+      onPointerUp={refocus}
+    >
       <DemoRibbon />
       <BackupAlerts session={session} />
       <LanBanner />
@@ -809,160 +1162,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       {closed ? (
         closedView
       ) : (
-        <div className="flex min-h-0 flex-1">
-          <main className="flex min-w-0 flex-1 flex-col gap-3 p-4">
-            <ScanField
-              inputRef={scanRef}
-              value={text}
-              onValueChange={setText}
-              multiplier={multiplier}
-              onCode={(code) => void lookup(code)}
-              // with one payment method set, Enter on the empty field pays like F12
-              onEmptyEnter={tillPayment.fixed ? pay : undefined}
-              onPick={pickProduct}
-              onMultiplier={(qty) => useCart.getState().setMultiplier(qty)}
-              onBump={(direction) => {
-                const state = useCart.getState();
-                const index = state.selected;
-                const line = index === null ? undefined : state.lines[index];
-                if (index === null || !line) return;
-                if (direction === 1) state.bump(index, 1);
-                else if (line.line.qty > 1_000) void reduceQty(index, line.line.qty - 1_000);
-              }}
-              onVoid={() => {
-                const index = useCart.getState().selected;
-                if (index !== null) void voidLine(index);
-              }}
-              onMove={(delta) => useCart.getState().move(delta)}
-            />
-            <div
-              className={cn(
-                "relative flex h-9 items-center overflow-hidden rounded-control border border-line bg-surface-2/70 px-3 transition-colors",
-                justAddedPulse && "border-primary/50 bg-surface-2",
-              )}
-            >
-              <div className="pointer-events-none absolute inset-x-3 top-1/2 h-0.5 -translate-y-1/2 bg-line/60" />
-              <div
-                className="relative z-10 flex items-center gap-1.5 text-ink transition-all duration-500 ease-out"
-                style={{ marginInlineStart: `${trackPercent}%` }}
-              >
-                <SupermarketCartIcon
-                  fillRatio={cartFillRatio}
-                  roaming={idleRoaming}
-                  justAdded={justAddedPulse}
-                />
-                <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold text-ink-2">
-                  {idleRoaming ? "خمول" : `${cyclePercent}%`}
-                </span>
-              </div>
-              {waitingForNextItem ? (
-                <span
-                  role="status"
-                  className="ms-auto inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning animate-pulse"
-                >
-                  <Clock aria-hidden className="h-3.5 w-3.5" />
-                  بانتظار الصنف التالي
-                </span>
-              ) : null}
-            </div>
-            {selectedLine ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-danger/30 bg-surface-2/80 px-3 py-2 transition-colors">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="truncate font-semibold">{selectedLine.display.name}</span>
-                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-semibold text-ink-2">
-                    <bdi dir="ltr">
-                      {formatQty(selectedLine.line.qty, lang)} {selectedLine.display.unitCode}
-                    </bdi>
-                  </span>
-                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-bold text-ink">
-                    <Amount value={selectedSubtotal} />
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                      needsOwnerApproval
-                        ? "bg-warning-soft text-warning"
-                        : "bg-info-soft text-info",
-                    )}
-                  >
-                    {needsOwnerApproval ? (
-                      <>
-                        <KeyRound aria-hidden className="h-3.5 w-3.5" />
-                        موافقة المالك
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck aria-hidden className="h-3.5 w-3.5" />
-                        صلاحية مفعلة
-                      </>
-                    )}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="danger"
-                    disabled={approval.pending || quickBusy || isVoiding}
-                    onClick={() => {
-                      if (selected !== null) void voidLine(selected);
-                    }}
-                    shortcut="Delete"
-                    shortcutLabel="Delete"
-                  >
-                    {isVoiding ? (
-                      <Loader2 aria-hidden className="animate-spin" />
-                    ) : (
-                      <Trash2 aria-hidden />
-                    )}
-                    حذف
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {notice ? (
-              <p
-                role={notice.tone === "error" ? "alert" : "status"}
-                className={cn(
-                  "rounded-control p-3 font-semibold",
-                  notice.tone === "error" ? "bg-danger-soft text-danger" : "bg-info-soft text-info",
-                )}
-              >
-                {notice.text}
-              </p>
-            ) : lastScan ? (
-              <p className="flex items-center justify-between rounded-control bg-surface p-3 text-lg">
-                <span>{t("pos:lastScan", { name: lastScan.name })}</span>
-                <Amount value={lastScan.price} className="font-bold" />
-              </p>
-            ) : null}
-            {modules.includes("department_keys") || modules.includes("flexy") ? (
-              <div className="flex flex-wrap gap-2">
-                {modules.includes("department_keys") ? (
-                  <Button
-                    variant={departments ? "secondary" : "outline"}
-                    aria-pressed={departments}
-                    onClick={toggleDepartments}
-                    {...cap("department_keys")}
-                  >
-                    {t("pos:actions.departments")}
-                  </Button>
-                ) : null}
-                {modules.includes("flexy") ? (
-                  <Button variant="outline" onClick={flexy} {...cap("flexy")}>
-                    {t("pos:actions.flexy")}
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-            {departments ? (
-              <Suspense fallback={null}>
-                <DepartmentKeysPanel />
-              </Suspense>
-            ) : (
-              <ProductGrid onPick={pickProduct} category={category} onCategory={setCategory} />
-            )}
-          </main>
+        <div ref={splitContainerRef} className="flex min-h-0 flex-1 overflow-hidden">
           <CartPanel
+            className="shrink-0"
             lines={lines}
             selected={selected}
             preview={preview.data}
@@ -996,7 +1198,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             payButton={
               <Button
                 variant="primary"
-                className="min-h-16 w-full text-2xl"
+                className="min-h-14 w-full text-2xl font-bold"
                 disabled={lines.length === 0 || Boolean(preview.error) || quickBusy}
                 onClick={pay}
                 {...cap("checkout")}
@@ -1005,7 +1207,16 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               </Button>
             }
             banner={
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCalcOpen(true)}
+                  title="آلة حاسبة"
+                  aria-label="آلة حاسبة"
+                  className="inline-flex size-8 items-center justify-center rounded-md border border-line bg-surface-2 text-ink transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand"
+                >
+                  <Calculator aria-hidden className="size-4" />
+                </button>
                 {withTables ? (
                   <Button variant="outline" onClick={() => void navigate("/pos/floor")}>
                     {t("pos:actions.tables")}
@@ -1062,10 +1273,45 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             }
             actions={actions}
           />
-        </div>
-      )}
-      <PosDialogs dialog={dialog} onClose={() => setDialog(null)} ctx={ctx} />
-      {approval.dialog}
-    </div>
-  );
-}
+
+          {/* Red resizable divider with top Pin toggle */}
+          <div
+            className={cn(
+              "group relative flex w-2.5 shrink-0 flex-col items-center border-x border-danger/80 bg-danger/10 transition-colors",
+              !splitPinned && "cursor-col-resize hover:bg-danger/20",
+              draggingSplit && "bg-danger/25",
+            )}
+            onPointerDown={handleDividerPointerDown}
+          >
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={togglePin}
+              title={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
+              aria-label={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
+              aria-pressed={splitPinned}
+              className={cn(
+                "mt-2 inline-flex size-6 items-center justify-center rounded-md border shadow-xs transition-colors",
+                splitPinned
+                  ? "border-danger bg-danger text-white"
+                  : "border-line bg-surface text-ink-2 hover:border-danger hover:text-danger",
+              )}
+            >
+              {splitPinned ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
+            </button>
+          </div>
+
+          <div
+            style={{ width: `${leftWidth}px` }}
+            className="sr-only pointer-events-none"
+            aria-hidden="true"
+          />
+
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4">
+            <ScanField
+              inputRef={scanRef}
+              value={text}
+              onValueChange={setText}
+              multiplier={multiplier}
+              onCode={(code) => void lookup(code)}
+              //
