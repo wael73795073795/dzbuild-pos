@@ -16,8 +16,8 @@ const TILE = 120;
 const GAP = 8;
 
 /** Category chips, then square tiles of `--pos-tile` (7.5rem; rem follows the text size):
- * shows the product photo when available (with compact labels so nothing crowds or covers it),
- * or keeps the standard layout with initials when there is no photo. */
+ * shows the product photo at full quality when available (with compact labels so nothing crowds
+ * or covers it), or keeps the standard layout with initials when there is no photo. */
 export function ProductGrid({
   onPick,
   category,
@@ -152,15 +152,15 @@ function Initials({ text }: { text: string }) {
   );
 }
 
-/** The product's thumbnail (`<data>/media`) in the initials' place; falls back cleanly to
- * initials if the image fails to load. */
+/** The product's high-quality photo (`<data>/media`) in the initials' place; accepts any
+ * image format supported by the renderer and falls back cleanly to initials if missing. */
 function TilePhoto({ image, fallback }: { image: string; fallback: string }) {
   const dataDir = useAppDataDir().data;
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     setFailed(false);
   }, [image]);
-  const src = dataDir && !failed ? mediaUrl(dataDir, image, true) : null;
+  const src = dataDir && !failed ? mediaUrl(dataDir, image, false) : null;
   if (!src) return <Initials text={fallback} />;
   return (
     <img
@@ -170,7 +170,7 @@ function TilePhoto({ image, fallback }: { image: string; fallback: string }) {
       loading="lazy"
       decoding="async"
       onError={() => setFailed(true)}
-      className="min-h-0 w-full flex-1 rounded-control bg-surface-2 object-cover"
+      className="min-h-0 w-full flex-1 rounded-control bg-surface-2 object-cover [image-rendering:auto]"
     />
   );
 }
