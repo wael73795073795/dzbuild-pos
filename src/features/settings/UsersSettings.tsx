@@ -436,7 +436,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-async function fileToAvatarDataUrl(file: File, maxSize = 256): Promise<string> {
+async function fileToAvatarDataUrl(file: File, maxSize = 512): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -464,9 +464,11 @@ async function fileToAvatarDataUrl(file: File, maxSize = 256): Promise<string> {
       return await readFileAsDataUrl(file);
     }
 
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
     try {
-      return canvas.toDataURL("image/jpeg", 0.85);
+      return canvas.toDataURL("image/png");
     } catch {
       return await readFileAsDataUrl(file);
     }
