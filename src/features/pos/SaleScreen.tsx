@@ -1,6 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Calculator,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Copy,
   Delete,
@@ -89,6 +91,7 @@ const VOUCHER_MODULES: Module[] = ["gift_vouchers", "loyalty", "orders", "repair
 const DEPARTMENTS_KEY = "dzpos.till.departments";
 const SPLIT_WIDTH_KEY = "dzpos.till.splitWidth";
 const SPLIT_PINNED_KEY = "dzpos.till.splitPinned";
+const RAIL_COLLAPSED_KEY = "dzpos.till.railCollapsed";
 
 const DEFAULT_LEFT_WIDTH = 520;
 const MIN_LEFT_WIDTH = 340;
@@ -152,19 +155,102 @@ function rememberSplitPinned(pinned: boolean): void {
   }
 }
 
+function rememberedRailCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(RAIL_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberRailCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(RAIL_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    // ignore storage errors
+  }
+}
+
+/** Safe recursive-descent math parser supporting +, -, *, /, parentheses, and decimals. */
 function evaluateBasicMath(expr: string): string {
   const cleaned = expr.replace(/×/g, "*").replace(/÷/g, "/").replace(/\s+/g, "");
   if (!cleaned) return "0";
   if (!/^[0-9+\-*/().]+$/.test(cleaned)) return "خطأ";
-  try {
-    const fn = new Function(`"use strict"; return (${cleaned});`);
-    const result: unknown = fn();
-    if (typeof result !== "number" || !Number.isFinite(result)) return "خطأ";
-    const rounded = Math.round(result * 1_000_000) / 1_000_000;
-    return String(rounded);
-  } catch {
+
+  const tokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
+  if (!tokens || tokens.join("") !== cleaned) return "خطأ";
+
+  let pos = 0;
+
+  const peek = (): string | undefined => tokens[pos];
+  const consume = (): string | undefined => tokens[pos++];
+
+  const parseExpression = (): number | null => {
+    let value = parseTerm();
+    if (value === null) return null;
+
+    while (peek() === "+" || peek() === "-") {
+      const op = consume();
+      const right = parseTerm();
+      if (right === null) return null;
+      value = op === "+" ? value + right : value - right;
+    }
+    return value;
+  };
+
+  const parseTerm = (): number | null => {
+    let value = parseFactor();
+    if (value === null) return null;
+
+    while (peek() === "*" || peek() === "/") {
+      const op = consume();
+      const right = parseFactor();
+      if (right === null) return null;
+      if (op === "/") {
+        if (right === 0) return null;
+        value = value / right;
+      } else {
+        value = value * right;
+      }
+    }
+    return value;
+  };
+
+  const parseFactor = (): number | null => {
+    const token = peek();
+    if (!token) return null;
+
+    if (token === "+" || token === "-") {
+      consume();
+      const next = parseFactor();
+      if (next === null) return null;
+      return token === "-" ? -next : next;
+    }
+
+    if (token === "(") {
+      consume();
+      const inside = parseExpression();
+      if (inside === null || peek() !== ")") return null;
+      consume();
+      return inside;
+    }
+
+    if (/^\d+(?:\.\d+)?$/.test(token)) {
+      consume();
+      const num = Number(token);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    return null;
+  };
+
+  const result = parseExpression();
+  if (result === null || pos !== tokens.length || !Number.isFinite(result)) {
     return "خطأ";
   }
+
+  const rounded = Math.round(result * 1_000_000) / 1_000_000;
+  return String(rounded);
 }
 
 function PosCalculatorModal({
@@ -483,6 +569,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState<number>(rememberedSplitWidth);
   const [splitPinned, setSplitPinned] = useState<boolean>(rememberedSplitPinned);
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(rememberedRailCollapsed);
   const [draggingSplit, setDraggingSplit] = useState(false);
 
   // Calculator popover/modal state
@@ -540,6 +627,14 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     setSplitPinned((prev) => {
       const next = !prev;
       rememberSplitPinned(next);
+      return next;
+    });
+  }, []);
+
+  const toggleRailCollapsed = useCallback(() => {
+    setRailCollapsed((prev) => {
+      const next = !prev;
+      rememberRailCollapsed(next);
       return next;
     });
   }, []);
@@ -1105,24 +1200,44 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     </div>
   );
 
-  const pos = "min-h-12 w-full flex-col gap-0.5 px-1.5 text-sm [&_kbd]:ms-0";
+  const pos = cn(
+    "min-h-12 w-full flex-col gap-0.5 text-sm [&_kbd]:ms-0",
+    railCollapsed ? "px-1 [&_span]:sr-only" : "px-1.5",
+  );
   const actions = (
-    <>
+    <div className="flex flex-col gap-1.5">
+      <button
+        type="button"
+        onClick={toggleRailCollapsed}
+        title={railCollapsed ? "تمديد الشريط الجانبي" : "طي الشريط الجانبي"}
+        aria-label={railCollapsed ? "تمديد الشريط الجانبي" : "طي الشريط الجانبي"}
+        aria-expanded={!railCollapsed}
+        className="mb-0.5 inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-line bg-surface text-xs font-semibold text-ink-2 transition-colors hover:border-brand hover:text-ink"
+      >
+        {railCollapsed ? (
+          <ChevronRight aria-hidden className="size-4 rtl:rotate-180" />
+        ) : (
+          <>
+            <ChevronLeft aria-hidden className="size-4 rtl:rotate-180" />
+            <span>طي</span>
+          </>
+        )}
+      </button>
       <Button className={pos} onClick={() => setDialog({ kind: "customer" })} {...cap("customer")}>
         <User aria-hidden />
-        {t("pos:actions.customer")}
+        <span>{t("pos:actions.customer")}</span>
       </Button>
       <Button className={pos} onClick={() => setDialog({ kind: "discount" })} {...cap("discount")}>
         <Percent aria-hidden />
-        {t("pos:actions.discount")}
+        <span>{t("pos:actions.discount")}</span>
       </Button>
       <Button className={pos} onClick={hold} disabled={!can("sales.hold")} {...cap("hold")}>
         <Pause aria-hidden />
-        {t("pos:actions.hold")}
+        <span>{t("pos:actions.hold")}</span>
       </Button>
       <Button className={pos} onClick={() => setDialog({ kind: "return" })} {...cap("return")}>
         <Undo2 aria-hidden className="rtl:-scale-x-100" />
-        {t("pos:actions.return")}
+        <span>{t("pos:actions.return")}</span>
       </Button>
       <Button
         className={pos}
@@ -1131,13 +1246,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         {...cap("drawer")}
       >
         <Wallet aria-hidden />
-        {t("pos:actions.drawer")}
+        <span>{t("pos:actions.drawer")}</span>
       </Button>
       <Button className={pos} onClick={() => setDialog({ kind: "menu" })} {...cap("menu")}>
         <Menu aria-hidden />
-        {t("pos:actions.menu")}
+        <span>{t("pos:actions.menu")}</span>
       </Button>
-    </>
+    </div>
   );
 
   const heldCount = held.data?.length ?? 0;
@@ -1163,155 +1278,72 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         closedView
       ) : (
         <div ref={splitContainerRef} className="flex min-h-0 flex-1 overflow-hidden">
-          <CartPanel
-            className="shrink-0"
-            lines={lines}
-            selected={selected}
-            preview={preview.data}
-            priced={priced}
-            stale={preview.isPlaceholderData}
-            error={preview.error}
-            customer={<CustomerStrip session={session} onOpen={() => setDialog({ kind: "customer" })} />}
-            onSelect={(index) => useCart.getState().select(index)}
-            onEdit={(index) => setDialog({ kind: "edit", index })}
-            notices={
-              modules.includes("pharmacy")
-                ? (index, productId) => (
-                    <Suspense fallback={null}>
-                      <LineNotices
-                        productId={productId}
-                        onReplace={(generic) => void replaceLine(index, generic)}
-                      />
-                    </Suspense>
-                  )
-                : undefined
-            }
-            onApproval={() =>
-              void approval
-                .run(async () => {
-                  const result = await preview.refetch();
-                  if (result.error) throw result.error;
-                  return result.data;
-                })
-                .catch(() => undefined)
-            }
-            payButton={
-              <Button
-                variant="primary"
-                className="min-h-14 w-full text-2xl font-bold"
-                disabled={lines.length === 0 || Boolean(preview.error) || quickBusy}
-                onClick={pay}
-                {...cap("checkout")}
-              >
-                {t("payments:pay")}
-              </Button>
-            }
-            banner={
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setCalcOpen(true)}
-                  title="آلة حاسبة"
-                  aria-label="آلة حاسبة"
-                  className="inline-flex size-8 items-center justify-center rounded-md border border-line bg-surface-2 text-ink transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand"
+          <div style={{ width: `${leftWidth}px` }} className="flex min-h-0 shrink-0">
+            <CartPanel
+              className="w-full"
+              lines={lines}
+              selected={selected}
+              preview={preview.data}
+              priced={priced}
+              stale={preview.isPlaceholderData}
+              error={preview.error}
+              customer={<CustomerStrip session={session} onOpen={() => setDialog({ kind: "customer" })} />}
+              onSelect={(index) => useCart.getState().select(index)}
+              onEdit={(index) => setDialog({ kind: "edit", index })}
+              notices={
+                modules.includes("pharmacy")
+                  ? (index, productId) => (
+                      <Suspense fallback={null}>
+                        <LineNotices
+                          productId={productId}
+                          onReplace={(generic) => void replaceLine(index, generic)}
+                        />
+                      </Suspense>
+                    )
+                  : undefined
+              }
+              onApproval={() =>
+                void approval
+                  .run(async () => {
+                    const result = await preview.refetch();
+                    if (result.error) throw result.error;
+                    return result.data;
+                  })
+                  .catch(() => undefined)
+              }
+              payButton={
+                <Button
+                  variant="primary"
+                  className="min-h-14 w-full text-2xl font-bold"
+                  disabled={lines.length === 0 || Boolean(preview.error) || quickBusy}
+                  onClick={pay}
+                  {...cap("checkout")}
                 >
-                  <Calculator aria-hidden className="size-4" />
-                </button>
-                {withTables ? (
-                  <Button variant="outline" onClick={() => void navigate("/pos/floor")}>
-                    {t("pos:actions.tables")}
-                  </Button>
-                ) : null}
-                {hardware.isSuccess ? (
-                  <PrinterDot
-                    configured={Boolean(hardware.data.receiptPrinterId)}
-                    onOpen={() => openDialog({ kind: "unprinted" })}
-                  />
-                ) : null}
-                <SyncPill session={session} />
-                {fromQuote ? (
-                  <span role="status" className="rounded-full bg-info-soft px-3 py-1 font-semibold text-info">
-                    {t("billing:offer.chip", { number: fromQuote.number })}
-                  </span>
-                ) : null}
-                {exchange ? (
-                  <span
-                    role="status"
-                    aria-label={t("pos:returns.exchangeActive")}
-                    className="flex items-center gap-1 rounded-full bg-info-soft ps-3 font-semibold text-info"
+                  {t("payments:pay")}
+                </Button>
+              }
+              banner={
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setCalcOpen(true)}
+                    title="آلة حاسبة"
+                    aria-label="آلة حاسبة"
+                    className="inline-flex size-8 items-center justify-center rounded-md border border-line bg-surface-2 text-ink transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand"
                   >
-                    {t("pos:returns.exchangeChip")} <Amount value={exchange.value} />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="rounded-full"
-                      aria-label={t("pos:returns.cancelExchange")}
-                      title={t("pos:returns.cancelExchange")}
-                      onClick={() => useCart.getState().startExchange(null)}
-                    >
-                      <X aria-hidden />
+                    <Calculator aria-hidden className="size-4" />
+                  </button>
+                  {withTables ? (
+                    <Button variant="outline" onClick={() => void navigate("/pos/floor")}>
+                      {t("pos:actions.tables")}
                     </Button>
-                  </span>
-                ) : null}
-                {hardware.data?.scale ? (
-                  <Button
-                    variant="outline"
-                    onClick={() => setDialog({ kind: "scale" })}
-                    shortcut="F11"
-                    shortcutLabel={t("common:keys.f11")}
-                  >
-                    <Scale aria-hidden />
-                    {t("pos:weigh.title")}
-                  </Button>
-                ) : null}
-                {heldCount > 0 ? (
-                  <Button variant="outline" onClick={() => openDialog({ kind: "held" })} {...cap("held")}>
-                    {t("pos:actions.held", { count: heldCount })}
-                  </Button>
-                ) : null}
-              </div>
-            }
-            actions={actions}
-          />
-
-          {/* Red resizable divider with top Pin toggle */}
-          <div
-            className={cn(
-              "group relative flex w-2.5 shrink-0 flex-col items-center border-x border-danger/80 bg-danger/10 transition-colors",
-              !splitPinned && "cursor-col-resize hover:bg-danger/20",
-              draggingSplit && "bg-danger/25",
-            )}
-            onPointerDown={handleDividerPointerDown}
-          >
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={togglePin}
-              title={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
-              aria-label={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
-              aria-pressed={splitPinned}
-              className={cn(
-                "mt-2 inline-flex size-6 items-center justify-center rounded-md border shadow-xs transition-colors",
-                splitPinned
-                  ? "border-danger bg-danger text-white"
-                  : "border-line bg-surface text-ink-2 hover:border-danger hover:text-danger",
-              )}
-            >
-              {splitPinned ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
-            </button>
-          </div>
-
-          <div
-            style={{ width: `${leftWidth}px` }}
-            className="sr-only pointer-events-none"
-            aria-hidden="true"
-          />
-
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4">
-            <ScanField
-              inputRef={scanRef}
-              value={text}
-              onValueChange={setText}
-              multiplier={multiplier}
-              onCode={(code) => void lookup(code)}
-              //
+                  ) : null}
+                  {hardware.isSuccess ? (
+                    <PrinterDot
+                      configured={Boolean(hardware.data.receiptPrinterId)}
+                      onOpen={() => openDialog({ kind: "unprinted" })}
+                    />
+                  ) : null}
+                  <SyncPill session={session} />
+                  {fromQuote ? (
+                    <span role="status" className="rounde
