@@ -114,11 +114,7 @@ export function CartPanel({
 
           {resolvedUserName || resolvedUserId ? (
             <div className="flex min-w-0 items-center gap-2 rounded-full border border-line bg-surface-2 py-1 ps-1 pe-2">
-              <Avatar
-                name={resolvedUserName || "?"}
-                userId={resolvedUserId}
-                className="size-7 text-xs"
-              />
+              <Avatar name={resolvedUserName || "?"} userId={resolvedUserId} />
               <div className="flex min-w-0 flex-col leading-tight">
                 {resolvedUserName ? (
                   <span className="truncate text-xs font-bold text-ink">{resolvedUserName}</span>
