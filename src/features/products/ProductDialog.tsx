@@ -1,4 +1,4 @@
-import { History, Trash2 } from "lucide-react";
+import { Eraser, History, Trash2 } from "lucide-react";
 import { Suspense, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
@@ -28,6 +28,7 @@ import {
   useRestoreProduct,
   useUpdateProduct,
 } from "@/lib/ipc/products";
+import { useAdjustStock, useStockLevels } from "@/lib/ipc/stock";
 import type { Category, PriceLevel, Product, Session, TaxRate, Unit } from "@/lib/ipc/types";
 import { localizedName } from "@/lib/names";
 import { parseAmount } from "@/lib/numeric";
@@ -108,6 +109,8 @@ function ProductEditor({
   const restore = useRestoreProduct();
   const duplicate = useDuplicateProduct();
   const setScale = useSetScaleItem();
+  const adjustStock = useAdjustStock();
+  const stockLevels = useStockLevels(product?.id ?? null);
   // the scale items are the main PC's: read-only on a till
   const till = useTillLink();
   const [tab, setTab] = useState<Tab>("product");
@@ -115,9 +118,11 @@ function ProductEditor({
   const [scale, setScaleEdit] = useState<ScaleDraft | null>(null);
   const [history, setHistory] = useState(false);
   const [matrix, setMatrix] = useState(false);
+  const [zeroingStock, setZeroingStock] = useState(false);
   const can = (p: Session["permissions"][number]) => session.permissions.includes(p);
   const seesCosts = can("reports.profit");
   const editable = can("products.edit");
+  const canAdjustStock = can("stock.adjust");
   // A new product's first prices need `products.edit` only; changing an existing product's prices
   // needs `products.price` (the backend keeps the stored ones otherwise, spec §4.5).
   const pricesLocked = product !== null && !can("products.price");
@@ -160,6 +165,67 @@ function ProductEditor({
     } else create.mutate(input, { onSuccess: onClose });
   });
   const title = product ? localizedName(product, lang) : t("products:dialog.new");
+
+  const handleZeroCurrentStock = async () => {
+    if (!product || zeroingStock || adjustStock.isPending) return;
+    const confirmed = window.confirm(`هل أنت متأكد من تصفير رصيد المخزون للصنف "${title}"؟`);
+    if (!confirmed) return;
+
+    setZeroingStock(true);
+    try {
+      const levelsList = stockLevels.data ?? [];
+      const nonZero = levelsList.filter((l) => l.qty !== 0);
+
+      if (nonZero.length > 0) {
+        for (const lvl of nonZero) {
+          await new Promise<void>((resolve, reject) => {
+            adjustStock.mutate(
+              {
+                productId: product.id,
+                locationId: lvl.locationId,
+                qtyDelta: -lvl.qty,
+                reason: "correction",
+                unitCost: null,
+                note: "تصفير رصيد المنتج",
+              },
+              {
+                onSuccess: () => resolve(),
+                onError: (e) => reject(e),
+              },
+            );
+          });
+        }
+      } else if (typeof (product as unknown as { stock?: number }).stock === "number") {
+        const fallbackStock = (product as unknown as { stock: number }).stock;
+        if (fallbackStock !== 0) {
+          await new Promise<void>((resolve, reject) => {
+            adjustStock.mutate(
+              {
+                productId: product.id,
+                locationId: null,
+                qtyDelta: -fallbackStock,
+                reason: "correction",
+                unitCost: null,
+                note: "تصفير رصيد المنتج",
+              },
+              {
+                onSuccess: () => resolve(),
+                onError: (e) => reject(e),
+              },
+            );
+          });
+        }
+      }
+
+      deleteCurrent.reset();
+      archive.reset();
+      toast.success(`تم تصفير رصيد الصنف "${title}" بنجاح`);
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally {
+      setZeroingStock(false);
+    }
+  };
 
   const handleDeleteProduct = () => {
     if (!product || deleteCurrent.isPending) return;
@@ -210,6 +276,7 @@ function ProductEditor({
     deleteCurrent.error ??
     restore.error ??
     duplicate.error ??
+    adjustStock.error ??
     (scaleField ? null : setScale.error);
   return (
     <>
@@ -225,6 +292,17 @@ function ProductEditor({
                 <Button variant="ghost" onClick={() => setHistory(true)}>
                   <History aria-hidden />
                   {t("products:dialog.history")}
+                </Button>
+              ) : null}
+              {product && canAdjustStock ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={zeroingStock || adjustStock.isPending}
+                  onClick={() => void handleZeroCurrentStock()}
+                >
+                  <Eraser aria-hidden />
+                  تصفير رصيد هذا المنتج
                 </Button>
               ) : null}
               {product ? (
@@ -494,9 +572,23 @@ function ProductEditor({
         {/* M8 wholesale: the minimum order and "Créer un pack", while the module is on */}
         {product && tab === "product" ? <ProductWholesale product={product} session={session} /> : null}
         {error ? (
-          <p role="alert" className="text-danger">
-            {errorText(error)}
-          </p>
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-danger"
+          >
+            <span>{errorText(error)}</span>
+            {product && canAdjustStock ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={zeroingStock || adjustStock.isPending}
+                onClick={() => void handleZeroCurrentStock()}
+              >
+                <Eraser aria-hidden />
+                تصفير رصيد هذا المنتج
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </Dialog>
       {matrix && product ? <VariantsDialog product={product} onClose={() => setMatrix(false)} /> : null}
