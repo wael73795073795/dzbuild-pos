@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Barcode,
   Calculator,
   ChevronLeft,
   ChevronRight,
@@ -17,13 +18,22 @@ import {
   PinOff,
   Scale,
   ShieldCheck,
+  Tag,
   Trash2,
   Undo2,
   User,
   Wallet,
   X,
 } from "lucide-react";
-import { type PointerEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type PointerEvent,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -92,6 +102,9 @@ const DEPARTMENTS_KEY = "dzpos.till.departments";
 const SPLIT_WIDTH_KEY = "dzpos.till.splitWidth";
 const SPLIT_PINNED_KEY = "dzpos.till.splitPinned";
 const RAIL_COLLAPSED_KEY = "dzpos.till.railCollapsed";
+
+const DEFAULT_NO_BARCODE_NAME = "صنف بدون باركود";
+const NO_BARCODE_LOOKUP_CODE = "0000000000000";
 
 const DEFAULT_LEFT_WIDTH = 520;
 const MIN_LEFT_WIDTH = 340;
@@ -251,6 +264,268 @@ function evaluateBasicMath(expr: string): string {
 
   const rounded = Math.round(result * 1_000_000) / 1_000_000;
   return String(rounded);
+}
+
+function QuickPriceModal({
+  open,
+  onClose,
+  onSubmitPrice,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmitPrice: (params: { price: number; customName?: string }) => Promise<void>;
+}) {
+  const [priceInput, setPriceInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const priceRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setPriceInput("");
+    setNameInput("");
+    setSubmitting(false);
+    window.setTimeout(() => priceRef.current?.focus(), 0);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    const parsed = Number(priceInput.replace(",", "."));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      toast.error("أدخل سعراً صحيحاً أكبر من صفر");
+      priceRef.current?.focus();
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const trimmed = nameInput.trim();
+      await onSubmitPrice({
+        price: parsed,
+        customName: trimmed.length > 0 ? trimmed : undefined,
+      });
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="سعر سريع"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <form
+        onSubmit={(e) => void handleSubmit(e)}
+        className="w-full max-w-[360px] rounded-xl border border-line bg-surface p-4 text-ink shadow-xl"
+      >
+        <div className="mb-3 flex items-center justify-between border-b border-line pb-2">
+          <div className="flex items-center gap-2">
+            <Tag aria-hidden className="size-4 text-brand" />
+            <span className="text-base font-bold">سعر سريع</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-danger-soft hover:text-danger"
+          >
+            <X aria-hidden className="size-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm font-semibold">
+            <span>السعر</span>
+            <input
+              ref={priceRef}
+              type="number"
+              step="any"
+              min="0.001"
+              dir="ltr"
+              value={priceInput}
+              onChange={(e) => setPriceInput(e.target.value)}
+              placeholder="0.00"
+              className="h-11 rounded-lg border border-line bg-surface-2 px-3 text-lg font-bold text-ink focus:border-brand focus:outline-none"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm font-semibold">
+            <span>اسم الصنف (اختياري)</span>
+            <input
+              type="text"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              placeholder={DEFAULT_NO_BARCODE_NAME}
+              className="h-10 rounded-lg border border-line bg-surface-2 px-3 text-sm text-ink focus:border-brand focus:outline-none"
+            />
+          </label>
+        </div>
+
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+            إلغاء
+          </Button>
+          <Button type="submit" variant="primary" disabled={submitting}>
+            {submitting ? <Loader2 aria-hidden className="size-4 animate-spin" /> : null}
+            إضافة للفاتورة
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function QuickWeightModal({
+  open,
+  onClose,
+  onSubmitWeight,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmitWeight: (params: { weightValue: number; barcode: string }) => Promise<void>;
+}) {
+  const [weightInput, setWeightInput] = useState("");
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const weightRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setWeightInput("");
+    setBarcodeInput("");
+    setSubmitting(false);
+    window.setTimeout(() => weightRef.current?.focus(), 0);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    const w = Number(weightInput.replace(",", "."));
+    const code = barcodeInput.trim();
+    if (!Number.isFinite(w) || w <= 0) {
+      toast.error("أدخل الوزن بشكل صحيح");
+      weightRef.current?.focus();
+      return;
+    }
+    if (!code) {
+      toast.error("أدخل أو امسح باركود الصنف");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmitWeight({ weightValue: w, barcode: code });
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="وزن سريع"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <form
+        onSubmit={(e) => void handleSubmit(e)}
+        className="w-full max-w-[360px] rounded-xl border border-line bg-surface p-4 text-ink shadow-xl"
+      >
+        <div className="mb-3 flex items-center justify-between border-b border-line pb-2">
+          <div className="flex items-center gap-2">
+            <Barcode aria-hidden className="size-4 text-brand" />
+            <span className="text-base font-bold">وزن سريع</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-danger-soft hover:text-danger"
+          >
+            <X aria-hidden className="size-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm font-semibold">
+            <span>الوزن (كما يظهر في الليبل / الجرام)</span>
+            <input
+              ref={weightRef}
+              type="number"
+              step="any"
+              min="0.001"
+              dir="ltr"
+              value={weightInput}
+              onChange={(e) => setWeightInput(e.target.value)}
+              placeholder="مثال: 500 أو 0.5"
+              className="h-11 rounded-lg border border-line bg-surface-2 px-3 text-lg font-bold text-ink focus:border-brand focus:outline-none"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm font-semibold">
+            <span>باركود الصنف</span>
+            <input
+              type="text"
+              dir="ltr"
+              value={barcodeInput}
+              onChange={(e) => setBarcodeInput(e.target.value)}
+              placeholder="امسح أو اكتب الباركود"
+              className="h-10 rounded-lg border border-line bg-surface-2 px-3 text-sm font-semibold text-ink focus:border-brand focus:outline-none"
+            />
+          </label>
+        </div>
+
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+            إلغاء
+          </Button>
+          <Button type="submit" variant="primary" disabled={submitting}>
+            {submitting ? <Loader2 aria-hidden className="size-4 animate-spin" /> : null}
+            حساب وإضافة
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 function PosCalculatorModal({
@@ -565,15 +840,18 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [departmentsOn, setDepartmentsOn] = useState(rememberedDepartments);
   const departments = departmentsOn && modules.includes("department_keys");
 
-  // Resizable split between left POS/receipt panel and right products/search panel
+  // Full-height split between left POS/receipt panel and right products/search panel
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState<number>(rememberedSplitWidth);
   const [splitPinned, setSplitPinned] = useState<boolean>(rememberedSplitPinned);
   const [railCollapsed, setRailCollapsed] = useState<boolean>(rememberedRailCollapsed);
   const [draggingSplit, setDraggingSplit] = useState(false);
 
-  // Calculator popover/modal state
+  // Calculator, quick price, and quick weight modals
   const [calcOpen, setCalcOpen] = useState(false);
+  const [quickPriceOpen, setQuickPriceOpen] = useState(false);
+  const [quickWeightOpen, setQuickWeightOpen] = useState(false);
+  const anySubModal = calcOpen || quickPriceOpen || quickWeightOpen;
 
   // the sales history sends a ticket to take items back from (RET-002); the repair board, a ready
   // ticket to hand back (M8, `{ pickup: ticketId }`); an order's page, the order to serve (M8,
@@ -696,7 +974,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       setWaitingForNextItem(hasOpenCart && elapsed >= PAUSE_WAIT_THRESHOLD_MS);
 
       const shouldRoam =
-        !hasOpenCart && dialog === null && !calcOpen && !approval.pending && elapsed >= IDLE_ROAM_THRESHOLD_MS;
+        !hasOpenCart && dialog === null && !anySubModal && !approval.pending && elapsed >= IDLE_ROAM_THRESHOLD_MS;
       setIdleRoaming(shouldRoam);
       if (shouldRoam) {
         const nextRandom = Math.round(8 + Math.random() * 68);
@@ -707,7 +985,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }, 2500);
 
     return () => window.clearInterval(timer);
-  }, [approval.pending, calcOpen, dialog, lastActivityAt, lines.length]);
+  }, [anySubModal, approval.pending, dialog, lastActivityAt, lines.length]);
 
   // an empty cart (a new sale) takes the shop's document language again, whatever the last
   // receipt was printed in
@@ -717,8 +995,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   // focus returns to the scan field whenever no dialog holds it (UX-010)
   useEffect(() => {
-    if (dialog === null && !calcOpen && !approval.pending) scanRef.current?.focus();
-  }, [approval.pending, calcOpen, dialog]);
+    if (dialog === null && !anySubModal && !approval.pending) scanRef.current?.focus();
+  }, [anySubModal, approval.pending, dialog]);
 
   // the ticket sent by the sales history (or the repair board, or an order's page) is consumed: the
   // screen mounting again on this history entry (after a lock, say) does not open it a second time
@@ -772,6 +1050,99 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       if (modules.includes("serials")) void askSerials(product.id).catch(() => undefined);
     },
     [askSerials, lang, modules, notify, t],
+  );
+
+  // Quick price: if customName is provided, use it directly without pulling an internal name;
+  // otherwise use "صنف بدون باركود" (and pull its DB product if registered, else fallback).
+  const handleQuickPriceSubmit = useCallback(
+    async ({ price, customName }: { price: number; customName?: string }) => {
+      const scaledPrice = Math.round(price * 1_000);
+      if (customName) {
+        useCart.getState().addProduct({
+          productId: "quick-price-custom",
+          qty: 1_000,
+          display: {
+            name: customName,
+            unitCode: "PCS",
+            unitDecimals: 0,
+            price: scaledPrice,
+            latinName: customName,
+          },
+          separate: true,
+        });
+        beep("ok");
+        setNotice(null);
+        return;
+      }
+
+      try {
+        const hit = await findByCode.mutateAsync(NO_BARCODE_LOOKUP_CODE);
+        if (hit) {
+          useCart.getState().addProduct({
+            productId: hit.product.id,
+            qty: 1_000,
+            display: {
+              name: localizedName(hit.product, lang) || DEFAULT_NO_BARCODE_NAME,
+              unitCode: hit.product.unitCode,
+              unitDecimals: unitDecimalsOf(hit.product, units),
+              price: scaledPrice,
+              latinName: hit.product.nameFr.trim() || hit.product.nameEn.trim() || DEFAULT_NO_BARCODE_NAME,
+            },
+            separate: true,
+          });
+          beep("ok");
+          setNotice(null);
+          return;
+        }
+      } catch {
+        // Fallback when the fixed no-barcode item is not yet added to DB
+      }
+
+      useCart.getState().addProduct({
+        productId: "quick-no-barcode",
+        qty: 1_000,
+        display: {
+          name: DEFAULT_NO_BARCODE_NAME,
+          unitCode: "PCS",
+          unitDecimals: 0,
+          price: scaledPrice,
+          latinName: DEFAULT_NO_BARCODE_NAME,
+        },
+        separate: true,
+      });
+      beep("ok");
+      setNotice(null);
+    },
+    [findByCode, lang, units],
+  );
+
+  // Quick weight: matches scale label reading (grams in thousandths, e.g. 500 -> 500, or 0.5 -> 500),
+  // looks up product by barcode, multiplies unit/kg price by weight, and adds to cart.
+  const handleQuickWeightSubmit = useCallback(
+    async ({ weightValue, barcode }: { weightValue: number; barcode: string }) => {
+      const qtyThousandths =
+        weightValue < 10 && !Number.isInteger(weightValue)
+          ? Math.round(weightValue * 1_000)
+          : Math.round(weightValue);
+      if (qtyThousandths <= 0) {
+        toast.error("الوزن غير صالح");
+        return;
+      }
+
+      try {
+        const hit = await findByCode.mutateAsync(barcode);
+        if (!hit) {
+          beep("error");
+          toast.error(`لم يتم العثور على باركود: ${barcode}`);
+          return;
+        }
+        addProduct(hit.product, qtyThousandths, 3, true);
+      } catch (error) {
+        beep("error");
+        toast.error(errorText(error));
+      }
+    },
+    [addProduct, errorText, findByCode],
   );
 
   // A scale label (spec §8) is a package of its own: its line never merges with another. A price
@@ -855,7 +1226,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // elsewhere the cashier is told to close the dialog first. The return and price-check dialogs
   // read scans in their own fields (`ScanInput`).
   const onScan = (code: string) => {
-    if (approval.pending || calcOpen) return;
+    if (approval.pending || anySubModal) return;
     // the "one method" checkout is finishing the cart on screen: a code read now would be lost
     if (quickPaying.current) {
       beep("error");
@@ -872,10 +1243,10 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }
   };
   const ownScanField = dialog?.kind === "return" || dialog?.kind === "price" || dialog?.kind === "quote";
-  useScanner(onScan, { ...scanner, enabled: till.data !== null && !ownScanField && !calcOpen });
+  useScanner(onScan, { ...scanner, enabled: till.data !== null && !ownScanField && !anySubModal });
   // a scanner in USB-COM mode reads into the same lookup (HW-020); a dialog that reads its own
   // scans gets them in its scan field instead
-  useSerialScans(onScan, till.data !== null && !ownScanField && !calcOpen);
+  useSerialScans(onScan, till.data !== null && !ownScanField && !anySubModal);
   useCustomerDisplayFeed(dialog?.kind === "scale" ? weighing : null);
 
   // Voids and cancellations send the cart as it stands and the backend values it (AUD-001): a
@@ -912,7 +1283,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   // Delete key on keyboard removes the selected line (with owner approval via voidLine),
   // ignoring typing inside inputs/textareas/selects/contenteditable elements.
   useEffect(() => {
-    if (dialog !== null || calcOpen || approval.pending || quickBusy || isVoiding) return;
+    if (dialog !== null || anySubModal || approval.pending || quickBusy || isVoiding) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Delete") return;
       const target = event.target as HTMLElement | null;
@@ -924,7 +1295,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [approval.pending, calcOpen, dialog, isVoiding, quickBusy, voidLine]);
+  }, [anySubModal, approval.pending, dialog, isVoiding, quickBusy, voidLine]);
 
   // Lowering a line's quantity is a partial void (SAL-040): journaled with the backend's figures
   // and under `sales.void_line` before the line changes. `false` when refused or cancelled.
@@ -1048,321 +1419,4 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       const done = await finishSale.finish({
         tenders,
         inputs,
-        printReceipt: receiptByDefault(hardware.data),
-        exchange: null,
-      });
-      if (done) commitDone(done);
-    } catch (error) {
-      if (!isApprovalCancelled(error)) setDialog({ kind: "pay", tenders, error });
-    } finally {
-      quickPaying.current = false;
-      setQuickBusy(false);
-    }
-  };
-
-  // "Encaisser": with a pack module that asks something of the sale (serials, a prescription, the
-  // buyer of a jewel), its checkout steps come first (`till-packs.tsx`), then the payment
-  const pay = () => {
-    if (useCart.getState().lines.length === 0 || preview.error || quickPaying.current) return;
-    const steps = modules.some((m) => CHECKOUT_MODULES.includes(m));
-    if (steps) setDialog({ kind: "pack", view: { kind: "checkout" } });
-    else void takePayment();
-  };
-
-  const toggleDepartments = () => {
-    rememberDepartments(!departments);
-    setDepartmentsOn(!departments);
-  };
-  const flexy = () => setDialog({ kind: "pack", view: { kind: "flexy" } });
-
-  // UX-017: every action through the till's key map; a pack action only while its module is on
-  // (Ctrl+3, the gift voucher, is a pack dialog bound here)
-  const handlers: Partial<Record<TillAction, () => void>> = {
-    help: () => setDialog({ kind: "help" }),
-    search: () => scanRef.current?.focus(),
-    customer: () => setDialog({ kind: "customer" }),
-    price_check: () => setDialog({ kind: "price" }),
-    discount: () => setDialog({ kind: "discount" }),
-    hold,
-    held: () => openDialog({ kind: "held" }),
-    return: () => setDialog({ kind: "return" }),
-    drawer: () => setDialog({ kind: "drawer" }),
-    repeat_last: () => useCart.getState().repeatLast(),
-    checkout: pay,
-    menu: () => setDialog({ kind: "menu" }),
-  };
-  if (modules.includes("restaurant")) handlers.floor = () => void navigate("/pos/floor");
-  if (modules.includes("flexy")) handlers.flexy = flexy;
-  if (modules.includes("department_keys")) handlers.department_keys = toggleDepartments;
-  // LOY-001: a gift voucher sold from the till (a pack dialog, its key from the map)
-  if (modules.includes("gift_vouchers") && can("sales.create")) {
-    handlers.gift_voucher = () => setDialog({ kind: "giftVoucher" });
-  }
-  if (modules.includes("serials")) {
-    handlers.serial = () => {
-      const line = useCart.getState().selected;
-      if (line !== null) setDialog({ kind: "pack", view: { kind: "serial", line } });
-    };
-  }
-  const bound = (Object.keys(DEFAULT_KEYS) as TillAction[]).filter((action) => handlers[action]);
-  const hotkeys: Partial<Record<Hotkey, () => void>> = { F11: () => setDialog({ kind: "scale" }) };
-  for (const action of bound) hotkeys[keys[action]] = handlers[action];
-  useHotkeys(hotkeys, dialog === null && !calcOpen && !approval.pending && !quickBusy);
-  /** A button's keycap from the key map. */
-  const cap = (action: TillAction) => ({
-    shortcut: ariaKey(keys[action]),
-    shortcutLabel: keyLabel(keys[action], t),
-  });
-  // SAL-046: a quote or proforma into the empty cart
-  useCtrlHotkey(
-    "d",
-    () => openDialog({ kind: "quote" }),
-    dialog === null && !calcOpen && !approval.pending && can("sales.create"),
-  );
-
-  const ctx: PosContext = {
-    session,
-    preview: preview.data,
-    run: approval.run,
-    voidLine,
-    reduceQty,
-    cancelSale,
-    recallHeld,
-    notify,
-    open: openDialog,
-    categoryId: category,
-    addWeighed,
-    onWeighing: setWeighing,
-    modules,
-    keys,
-    actions: bound,
-    addProduct,
-    checkoutDone: () => {
-      setDialog(null);
-      void takePayment();
-    },
-    toggleDepartments,
-  };
-
-  // Pharmacy: a cheaper generic replaces the line as a void (journaled, AUD-001) and a new line
-  const replaceLine = async (index: number, generic: TillProduct) => {
-    const draft = useCart.getState().lines[index];
-    if (!draft) return;
-    if (await voidLine(index)) addProduct(generic, draft.line.qty, unitDecimalsOf(generic, units));
-  };
-
-  // Focus goes back to the scan field after every tap on the screen (a tile, a line, a chip), so
-  // the keyboard model (+, -, *, Del, typed codes) keeps working (UX-010).
-  const refocus = (event: PointerEvent<HTMLDivElement>) => {
-    if (dialog !== null || calcOpen || approval.pending || draggingSplit) return;
-    const target = event.target as HTMLElement;
-    if (target.closest("input, textarea, select, [contenteditable='true']")) return;
-    window.setTimeout(() => {
-      if (!document.querySelector("[role='dialog']")) scanRef.current?.focus();
-    }, 0);
-  };
-
-  void priced;
-  const selectedLine = selected !== null ? lines[selected] : undefined;
-  const selectedSubtotal =
-    selectedLine !== undefined
-      ? Math.round((selectedLine.display.price * selectedLine.line.qty) / 1_000)
-      : 0;
-  const needsOwnerApproval = !can("sales.void_line");
-
-  const itemCount = lines.length;
-  const cycleStep = itemCount === 0 ? 0 : ((itemCount - 1) % CART_TRACK_CAPACITY) + 1;
-  const cyclePercent = itemCount === 0 ? 0 : Math.round((cycleStep / CART_TRACK_CAPACITY) * 100);
-  const trackPercent = idleRoaming ? roamPercent : cyclePercent;
-  const cartFillRatio = idleRoaming ? 0 : cycleStep / CART_TRACK_CAPACITY;
-
-  const closed = till.isSuccess && till.data === null;
-  const closedView = (
-    <div className="grid flex-1 place-items-center p-6">
-      <EmptyState
-        icon={Lock}
-        title={t("pos:closed.title")}
-        body={t("pos:closed.body")}
-        action={
-          <div className="flex gap-2">
-            {can("cash.open") ? (
-              <Button variant="primary" size="lg" onClick={() => setDialog({ kind: "openSession" })}>
-                <Wallet aria-hidden />
-                {t("pos:closed.open")}
-              </Button>
-            ) : null}
-            <Button variant="outline" size="lg" onClick={() => void navigate(backOfficeHome(session))}>
-              {t("pos:closed.back")}
-            </Button>
-          </div>
-        }
-      />
-    </div>
-  );
-
-  const pos = cn(
-    "min-h-12 w-full flex-col gap-0.5 text-sm [&_kbd]:ms-0",
-    railCollapsed ? "px-1 [&_span]:sr-only" : "px-1.5",
-  );
-  const actions = (
-    <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        onClick={toggleRailCollapsed}
-        title={railCollapsed ? "تمديد الشريط الجانبي" : "طي الشريط الجانبي"}
-        aria-label={railCollapsed ? "تمديد الشريط الجانبي" : "طي الشريط الجانبي"}
-        aria-expanded={!railCollapsed}
-        className="mb-0.5 inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-line bg-surface text-xs font-semibold text-ink-2 transition-colors hover:border-brand hover:text-ink"
-      >
-        {railCollapsed ? (
-          <ChevronRight aria-hidden className="size-4 rtl:rotate-180" />
-        ) : (
-          <>
-            <ChevronLeft aria-hidden className="size-4 rtl:rotate-180" />
-            <span>طي</span>
-          </>
-        )}
-      </button>
-      <Button
-        className={pos}
-        title={t("pos:actions.customer")}
-        onClick={() => setDialog({ kind: "customer" })}
-        {...cap("customer")}
-      >
-        <User aria-hidden />
-        <span>{t("pos:actions.customer")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.discount")}
-        onClick={() => setDialog({ kind: "discount" })}
-        {...cap("discount")}
-      >
-        <Percent aria-hidden />
-        <span>{t("pos:actions.discount")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.hold")}
-        onClick={hold}
-        disabled={!can("sales.hold")}
-        {...cap("hold")}
-      >
-        <Pause aria-hidden />
-        <span>{t("pos:actions.hold")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.return")}
-        onClick={() => setDialog({ kind: "return" })}
-        {...cap("return")}
-      >
-        <Undo2 aria-hidden className="rtl:-scale-x-100" />
-        <span>{t("pos:actions.return")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.drawer")}
-        onClick={() => setDialog({ kind: "drawer" })}
-        disabled={!can("cash.paid_in_out")}
-        {...cap("drawer")}
-      >
-        <Wallet aria-hidden />
-        <span>{t("pos:actions.drawer")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.menu")}
-        onClick={() => setDialog({ kind: "menu" })}
-        {...cap("menu")}
-      >
-        <Menu aria-hidden />
-        <span>{t("pos:actions.menu")}</span>
-      </Button>
-    </div>
-  );
-
-  const heldCount = held.data?.length ?? 0;
-  // One tree for the open and the closed till, so the backup alerts (the "database damaged"
-  // alert above all) keep their place and state when the till's state arrives.
-  return (
-    <div
-      className={cn(
-        "flex h-dvh flex-col bg-bg text-[1.125rem] text-ink",
-        draggingSplit && "select-none",
-      )}
-      onPointerUp={refocus}
-    >
-      <DemoRibbon />
-      <BackupAlerts session={session} />
-      <LanBanner />
-      {van ? (
-        <Suspense fallback={null}>
-          <VanBanner />
-        </Suspense>
-      ) : null}
-      {closed ? (
-        closedView
-      ) : (
-        <div ref={splitContainerRef} className="flex min-h-0 flex-1 overflow-hidden">
-          <div style={{ width: `${leftWidth}px` }} className="flex min-h-0 shrink-0">
-            <CartPanel
-              className="w-full"
-              lines={lines}
-              selected={selected}
-              preview={preview.data}
-              priced={priced}
-              stale={preview.isPlaceholderData}
-              error={preview.error}
-              customer={<CustomerStrip session={session} onOpen={() => setDialog({ kind: "customer" })} />}
-              onSelect={(index) => useCart.getState().select(index)}
-              onEdit={(index) => setDialog({ kind: "edit", index })}
-              notices={
-                modules.includes("pharmacy")
-                  ? (index, productId) => (
-                      <Suspense fallback={null}>
-                        <LineNotices
-                          productId={productId}
-                          onReplace={(generic) => void replaceLine(index, generic)}
-                        />
-                      </Suspense>
-                    )
-                  : undefined
-              }
-              onApproval={() =>
-                void approval
-                  .run(async () => {
-                    const result = await preview.refetch();
-                    if (result.error) throw result.error;
-                    return result.data;
-                  })
-                  .catch(() => undefined)
-              }
-              payButton={
-                <Button
-                  variant="primary"
-                  className="min-h-14 w-full text-2xl font-bold"
-                  disabled={lines.length === 0 || Boolean(preview.error) || quickBusy}
-                  onClick={pay}
-                  {...cap("checkout")}
-                >
-                  {t("payments:pay")}
-                </Button>
-              }
-              banner={
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setCalcOpen(true)}
-                    title="آلة حاسبة"
-                    aria-label="آلة حاسبة"
-                    className="inline-flex size-8 items-center justify-center rounded-md border border-line bg-surface-2 text-ink transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand"
-                  >
-                    <Calculator aria-hidden className="size-4" />
-                  </button>
-                  {withTables ? (
-                    <Button variant="outline" onClick={() => void navigate("/pos/floor")}>
-                      {t("pos:actions.tables")}
-                    </Button>
-                  ) : null}
-       
+        printReceipt: receiptByDefault
