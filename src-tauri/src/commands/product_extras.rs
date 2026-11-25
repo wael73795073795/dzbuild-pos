@@ -24,9 +24,11 @@ use tauri_plugin_dialog::DialogExt;
 const READ: &[Permission] = &[Permission::ProductsView];
 /// The margin helper takes a cost: for those who price or see the margins.
 const PRICE_HELP: &[Permission] = &[Permission::ProductsPrice, Permission::ReportsProfit];
-/// What a photo may be; the filter's name is its extensions, the same in every language.
-const IMAGE_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
-const IMAGE_FILTER: &str = "jpg, jpeg, png, webp";
+/// Supported image extensions for picking and importing product photos.
+const IMAGE_EXTENSIONS: [&str; 12] = [
+    "jpg", "jpeg", "jfif", "png", "webp", "gif", "bmp", "avif", "tif", "tiff", "heic", "heif",
+];
+const IMAGE_FILTER: &str = "jpg, jpeg, jfif, png, webp, gif, bmp, avif, tif, tiff, heic, heif";
 
 /// IMX-018: a folder of photos named by barcode or reference.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Type)]
