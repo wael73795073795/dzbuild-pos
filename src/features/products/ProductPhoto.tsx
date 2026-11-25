@@ -10,9 +10,9 @@ import { useErrorText } from "@/lib/use-error-text";
 import { useLang } from "@/lib/use-language";
 
 /**
- * PRD-004: the product's photo, as its thumbnail under `<data>/media`. "Choisir une photo" opens
- * the Rust file dialog (the webview never names a path); the backend resizes the picture and keeps
- * the previous one until the new one is written.
+ * PRD-004: the product's photo under `<data>/media`. "Choisir une photo" opens
+ * the Rust file dialog (the webview never names a path); the backend stores the picture
+ * and keeps the previous one until the new one is written.
  */
 export function ProductPhoto({ product, editable }: { product: Product; editable: boolean }) {
   const { t } = useTranslation();
@@ -21,7 +21,7 @@ export function ProductPhoto({ product, editable }: { product: Product; editable
   const dataDir = useAppDataDir().data;
   const pick = usePickImage();
   const clear = useClearImage();
-  const src = dataDir ? mediaUrl(dataDir, product.image, true) : null;
+  const src = dataDir ? mediaUrl(dataDir, product.image, false) : null;
   const error = pick.error ?? clear.error;
   const busy = pick.isPending || clear.isPending;
   return (
@@ -30,7 +30,7 @@ export function ProductPhoto({ product, editable }: { product: Product; editable
         <img
           src={src}
           alt={t("products:photo.alt", { name: localizedName(product, lang) })}
-          className="size-32 rounded-card border border-line object-cover"
+          className="size-32 rounded-card border border-line object-cover [image-rendering:auto]"
         />
       ) : (
         <div className="grid size-32 place-items-center rounded-card border border-dashed border-line bg-surface-2 text-center text-sm text-ink-2">
