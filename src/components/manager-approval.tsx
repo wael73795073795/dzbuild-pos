@@ -277,7 +277,7 @@ export function ManagerApprovalDialog({
                 }}
                 className="flex min-h-16 items-center gap-3 rounded-card border border-line bg-surface p-3 text-start font-semibold hover:bg-surface-2"
               >
-                <Avatar name={tile.displayName} />
+                <Avatar name={tile.displayName} userId={tile.id} />
                 {tile.displayName}
               </button>
             ))}
