@@ -1,6 +1,5 @@
-//! Product photos (PRD-004): any PNG, JPEG or WebP a phone or a scanner produces, re-encoded
-//! as a JPEG of at most 512 px and a 128 px thumbnail, so a 4 GB till never loads a 12 MP photo
-//! into its product grid. Oversized files and decompression bombs are refused before decoding.
+//! Product photos (PRD-004): high-clarity re-encoded JPEG photo and thumbnail from any format
+//! supported by the decoder, with memory and size guards against oversized inputs.
 
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageReader, Limits};
@@ -9,6 +8,10 @@ use std::io::Cursor;
 
 pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SIDE: u32 = 8_000;
+const FULL_MAX_SIDE: u32 = 1_024;
+const THUMB_MAX_SIDE: u32 = 256;
+const FULL_JPEG_QUALITY: u8 = 92;
+const THUMB_JPEG_QUALITY: u8 = 88;
 
 #[derive(Debug)]
 pub struct ProductImages {
@@ -47,15 +50,15 @@ pub fn product_images(bytes: &[u8]) -> Result<ProductImages, AppError> {
         image::ImageError::Limits(_) => too_large(),
         _ => AppError::validation("image", "image_invalid"),
     })?;
-    let full = if img.width() > 512 || img.height() > 512 {
-        img.resize(512, 512, image::imageops::FilterType::Triangle)
+    let full = if img.width() > FULL_MAX_SIDE || img.height() > FULL_MAX_SIDE {
+        img.resize(FULL_MAX_SIDE, FULL_MAX_SIDE, image::imageops::FilterType::Lanczos3)
     } else {
         img.clone()
     };
-    let thumb = img.thumbnail(128, 128);
+    let thumb = img.thumbnail(THUMB_MAX_SIDE, THUMB_MAX_SIDE);
     Ok(ProductImages {
-        full: jpeg(&full, 85)?,
-        thumb: jpeg(&thumb, 80)?,
+        full: jpeg(&full, FULL_JPEG_QUALITY)?,
+        thumb: jpeg(&thumb, THUMB_JPEG_QUALITY)?,
     })
 }
 
@@ -73,12 +76,12 @@ mod tests {
     }
 
     #[test]
-    fn photos_become_a_512_jpeg_and_a_thumbnail() {
+    fn photos_become_a_high_res_jpeg_and_a_thumbnail() {
         let images = product_images(&png(2_048, 1_200)).unwrap();
         let full = image::load_from_memory(&images.full).unwrap();
         let thumb = image::load_from_memory(&images.thumb).unwrap();
-        assert_eq!((full.width(), full.height()), (512, 300));
-        assert_eq!((thumb.width(), thumb.height()), (128, 75));
+        assert_eq!((full.width(), full.height()), (1_024, 600));
+        assert_eq!((thumb.width(), thumb.height()), (256, 150));
         assert_eq!(&images.full[..2], &[0xFF, 0xD8], "JPEG");
         let small = product_images(&png(200, 100)).unwrap();
         assert_eq!(
