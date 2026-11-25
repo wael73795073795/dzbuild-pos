@@ -1,6 +1,7 @@
 import {
   Check,
   Copy,
+  Download,
   Eye,
   EyeOff,
   KeyRound,
@@ -47,6 +48,46 @@ type Errors = Partial<Record<string, string>>;
 
 const OWNER_BARCODE_STORAGE_KEY = "dzbuild_owner_barcode_v1";
 const OWNER_BARCODE_SHOW_DIGITS_KEY = "dzbuild_owner_barcode_show_digits_v1";
+
+const BARCODE_DIGIT_PATTERNS: Record<string, string> = {
+  "0": "11121211",
+  "1": "12111221",
+  "2": "11211221",
+  "3": "12211112",
+  "4": "11122112",
+  "5": "12122111",
+  "6": "11222111",
+  "7": "11111222",
+  "8": "12111122",
+  "9": "11211122",
+};
+
+function buildBarcodeBars(code: string): { widthPx: number; dark: boolean }[] {
+  const bars: { widthPx: number; dark: boolean }[] = [
+    { widthPx: 3, dark: true },
+    { widthPx: 3, dark: false },
+    { widthPx: 3, dark: true },
+  ];
+
+  for (const ch of code) {
+    const pattern = BARCODE_DIGIT_PATTERNS[ch] ?? BARCODE_DIGIT_PATTERNS["0"] ?? "11121211";
+    for (let i = 0; i < pattern.length; i += 1) {
+      const units = Number(pattern[i] ?? "1") || 1;
+      bars.push({
+        widthPx: units * 2,
+        dark: i % 2 === 0,
+      });
+    }
+  }
+
+  bars.push(
+    { widthPx: 3, dark: true },
+    { widthPx: 3, dark: false },
+    { widthPx: 3, dark: true },
+  );
+
+  return bars;
+}
 
 function generateNumericOwnerBarcode(length = 16): string {
   const safeLength = Math.max(12, Math.min(20, Math.floor(length)));
@@ -117,42 +158,47 @@ function writeShowBarcodeDigits(show: boolean): void {
   }
 }
 
-function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: boolean }) {
-  const digitPatterns: Record<string, string> = {
-    "0": "11121211",
-    "1": "12111221",
-    "2": "11211221",
-    "3": "12211112",
-    "4": "11122112",
-    "5": "12122111",
-    "6": "11222111",
-    "7": "11111222",
-    "8": "12111122",
-    "9": "11211122",
-  };
+function renderBarcodeCanvas(code: string, showDigits: boolean): HTMLCanvasElement | null {
+  const bars = buildBarcodeBars(code);
+  const totalBarWidth = bars.reduce((sum, b) => sum + b.widthPx, 0);
+  const padX = 36;
+  const padTop = 24;
+  const barHeight = 120;
+  const digitsSpace = showDigits ? 44 : 16;
+  const padBottom = 20;
 
-  const bars: { widthPx: number; dark: boolean }[] = [
-    { widthPx: 3, dark: true },
-    { widthPx: 3, dark: false },
-    { widthPx: 3, dark: true },
-  ];
+  const canvas = document.createElement("canvas");
+  canvas.width = totalBarWidth + padX * 2;
+  canvas.height = padTop + barHeight + digitsSpace + padBottom;
 
-  for (const ch of code) {
-    const pattern = digitPatterns[ch] ?? digitPatterns["0"] ?? "11121211";
-    for (let i = 0; i < pattern.length; i += 1) {
-      const units = Number(pattern[i] ?? "1") || 1;
-      bars.push({
-        widthPx: units * 2,
-        dark: i % 2 === 0,
-      });
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let x = padX;
+  for (const bar of bars) {
+    if (bar.dark) {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(x, padTop, bar.widthPx, barHeight);
     }
+    x += bar.widthPx;
   }
 
-  bars.push(
-    { widthPx: 3, dark: true },
-    { widthPx: 3, dark: false },
-    { widthPx: 3, dark: true },
-  );
+  if (showDigits) {
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 20px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(code.split("").join(" "), canvas.width / 2, padTop + barHeight + 24);
+  }
+
+  return canvas;
+}
+
+function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: boolean }) {
+  const bars = buildBarcodeBars(code);
 
   return (
     <div className="flex flex-col items-center gap-3 rounded-card border border-line bg-white px-6 py-5 text-black">
@@ -211,45 +257,115 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
     }
   };
 
+  const handleDownloadPng = () => {
+    const canvas = renderBarcodeCanvas(barcode, showDigits);
+    if (!canvas) {
+      toast.error("تعذر تجهيز صورة الباركود");
+      return;
+    }
+    const url = canvas.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `owner-barcode-${barcode}.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    toast.success("تم حفظ صورة الباركود PNG");
+  };
+
   const handlePrint = () => {
-    const printWindow = window.open("", "_blank", "width=560,height=420");
-    if (!printWindow) {
-      window.print();
+    const canvas = renderBarcodeCanvas(barcode, showDigits);
+    const dataUrl = canvas ? canvas.toDataURL("image/png") : "";
+
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.setAttribute("aria-hidden", "true");
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentDocument ?? iframe.contentWindow?.document;
+    if (!doc || !iframe.contentWindow) {
+      iframe.remove();
+      toast.error("تعذر فتح معاينة الطباعة");
       return;
     }
 
-    const digitsHtml = showDigits
-      ? `<div style="font-family: monospace; font-size: 22px; font-weight: 700; letter-spacing: 5px; margin-top: 12px; direction: ltr;">${barcode}</div>`
+    const digitsBlock = showDigits
+      ? `<div style="font-family: monospace; font-size: 22px; font-weight: 700; letter-spacing: 5px; margin-top: 12px; direction: ltr; color: #000;">${barcode}</div>`
       : "";
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>باركود صلاحية المالك</title>
-          <style>
-            body {
-              font-family: sans-serif;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              min-height: 92vh;
-              margin: 0;
-              background: #fff;
-              color: #000;
-            }
-            .title { font-size: 16px; font-weight: 700; margin-bottom: 14px; }
-          </style>
-        </head>
-        <body>
-          <div class="title">باركود موافقة المالك</div>
-          <div style="font-family: monospace; font-size: 14px; color: #333;">الرمز الرقمي: ${showDigits ? barcode : "مخفي"}</div>
-          ${digitsHtml}
-          <script>window.onload = function() { window.print(); window.close(); };</script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+    const imgBlock = dataUrl
+      ? `<img src="${dataUrl}" alt="Owner Barcode" style="max-width: 92%; height: auto; display: block; margin: 10px auto;" />`
+      : `<div style="font-family: monospace; font-size: 16px; color: #000;">${barcode}</div>`;
+
+    doc.open();
+    doc.write(`<!doctype html>
+<html dir="rtl" lang="ar">
+  <head>
+    <meta charset="utf-8" />
+    <title>باركود صلاحية المالك</title>
+    <style>
+      @page { margin: 12mm; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #ffffff !important;
+        color: #000000 !important;
+        font-family: Tahoma, Arial, sans-serif;
+      }
+      .sheet {
+        min-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .title {
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      .sub {
+        font-size: 12px;
+        color: #333333;
+        margin-bottom: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="title">باركود موافقة المالك</div>
+      <div class="sub">للموافقة الفورية على العملية الحالية فقط</div>
+      ${imgBlock}
+      ${digitsBlock}
+    </div>
+  </body>
+</html>`);
+    doc.close();
+
+    const triggerPrint = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } finally {
+        setTimeout(() => {
+          iframe.remove();
+        }, 4000);
+      }
+    };
+
+    const imgEl = doc.querySelector("img");
+    if (imgEl && !imgEl.complete) {
+      imgEl.onload = () => setTimeout(triggerPrint, 120);
+      imgEl.onerror = () => setTimeout(triggerPrint, 120);
+    } else {
+      setTimeout(triggerPrint, 150);
+    }
   };
 
   return (
@@ -269,6 +385,10 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
           <Button type="button" variant="outline" onClick={handleCopy}>
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
             {copied ? "تم النسخ" : "نسخ الرقم"}
+          </Button>
+          <Button type="button" variant="outline" onClick={handleDownloadPng}>
+            <Download aria-hidden />
+            حفظ PNG
           </Button>
           <Button type="button" variant="outline" onClick={handlePrint}>
             <Printer aria-hidden />
