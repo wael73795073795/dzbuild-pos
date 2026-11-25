@@ -1,6 +1,6 @@
 import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { BadgePercent, PencilLine, Plus, Printer, Tag, Tags, Trash2, TrendingUp } from "lucide-react";
+import { BadgePercent, Eraser, PencilLine, Plus, Printer, Tag, Tags, Trash2, TrendingUp } from "lucide-react";
 import { type ReactNode, Suspense, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
@@ -11,6 +11,7 @@ import { ScanInput } from "@/components/scan-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { NativeSelect } from "@/components/ui/native-select";
 import { ImportLink } from "@/features/imports/import-entities";
@@ -25,6 +26,7 @@ import { useCategories } from "@/lib/ipc/catalog";
 import { useTillLink } from "@/lib/ipc/lan";
 import { usePackState } from "@/lib/ipc/pack-state";
 import { useArchiveProduct, useProduct, useProductCatalog, useProductSearch } from "@/lib/ipc/products";
+import { useAdjustStock } from "@/lib/ipc/stock";
 import type { ArchiveFilter, Module, Permission, ProductHit, Session } from "@/lib/ipc/types";
 import { localizedName } from "@/lib/names";
 import { formatQty } from "@/lib/numeric";
@@ -135,6 +137,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const lang = useLang();
   const errorText = useErrorText();
   const deleteOrArchive = useArchiveProduct();
+  const adjustStock = useAdjustStock();
   const [text, setText] = useState("");
   const [category, setCategory] = useState("");
   const [archived, setArchived] = useState<ArchiveFilter>("active");
@@ -143,6 +146,11 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const [bulk, setBulk] = useState<"price" | "edit" | "labels" | null>(null);
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [deletingTicked, setDeletingTicked] = useState(false);
+  const [zeroingTicked, setZeroingTicked] = useState(false);
+  const [deleteBlockedDialog, setDeleteBlockedDialog] = useState<{
+    message: string;
+    blockedIds: string[];
+  } | null>(null);
   const query = useDebounced(text.trim(), 200);
   const categories = (useCategories().data ?? []).filter((c) => !c.archived);
   const search = useProductSearch(
@@ -162,48 +170,123 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   // never are.
   const till = useTillLink();
   const canEdit = session.permissions.includes("products.edit") && (!till.isTill || till.online);
+  const canAdjustStock = session.permissions.includes("stock.adjust") && (!till.isTill || till.online);
   const canPrice = session.permissions.includes("products.price");
   const canLabel = session.permissions.includes("products.labels");
   // IMX-010: the catalogue as the import reads it back (costs only with `reports.profit`).
   const canExport = session.permissions.includes("products.view");
-  const selects = canEdit || canPrice || canLabel;
+  const selects = canEdit || canPrice || canLabel || canAdjustStock;
   const allTicked = rows.length > 0 && rows.every((r) => ticked.has(r.id));
 
-  const handleDeleteSelected = async () => {
-    const ids = [...ticked];
-    if (ids.length === 0 || deletingTicked) return;
-    const confirmed = window.confirm(`هل أنت متأكد من حذف الأصناف المحددة (${ids.length})؟`);
-    if (!confirmed) return;
+  const zeroProductsStock = async (targetIds: readonly string[], skipConfirm = false) => {
+    if (targetIds.length === 0 || zeroingTicked || adjustStock.isPending) return;
+    if (!skipConfirm) {
+      const confirmed = window.confirm(
+        `هل أنت متأكد من تصفير أرصدة المخزون للأصناف المحددة (${targetIds.length})؟`,
+      );
+      if (!confirmed) return;
+    }
 
-    setDeletingTicked(true);
-    const removedIds = new Set<string>();
+    setZeroingTicked(true);
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    let zeroedCount = 0;
+
     try {
-      for (const id of ids) {
+      for (const id of targetIds) {
+        const hit = rowById.get(id);
+        const currentStock = hit?.stock ?? 0;
+        if (currentStock === 0) continue;
+
         await new Promise<void>((resolve, reject) => {
-          deleteOrArchive.mutate(id, {
-            onSuccess: () => {
-              removedIds.add(id);
-              resolve();
+          adjustStock.mutate(
+            {
+              productId: id,
+              locationId: null,
+              qtyDelta: -currentStock,
+              reason: "correction",
+              unitCost: null,
+              note: "تصفير أرصدة المنتجات المختارة",
             },
-            onError: (err) => reject(err),
-          });
+            {
+              onSuccess: () => {
+                zeroedCount += 1;
+                resolve();
+              },
+              onError: (err) => reject(err),
+            },
+          );
         });
       }
-      setTicked(new Set());
-      toast.success(`تم حذف ${removedIds.size} صنف بنجاح`);
+
+      toast.success(
+        zeroedCount > 0
+          ? `تم تصفير أرصدة ${zeroedCount} صنف بنجاح`
+          : "أرصدة الأصناف المحددة مصفّرة بالفعل",
+      );
     } catch (err) {
+      toast.error(errorText(err));
+      throw err;
+    } finally {
+      setZeroingTicked(false);
+    }
+  };
+
+  const executeDeleteIds = async (ids: readonly string[]) => {
+    if (ids.length === 0 || deletingTicked) return;
+    setDeletingTicked(true);
+    const removedIds = new Set<string>();
+    const failedIds: string[] = [];
+    let lastError: unknown = null;
+
+    try {
+      for (const id of ids) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            deleteOrArchive.mutate(id, {
+              onSuccess: () => {
+                removedIds.add(id);
+                resolve();
+              },
+              onError: (err) => reject(err),
+            });
+          });
+        } catch (err) {
+          failedIds.push(id);
+          lastError = err;
+        }
+      }
+
       if (removedIds.size > 0) {
         setTicked((prev) => {
           const next = new Set(prev);
           for (const id of removedIds) next.delete(id);
           return next;
         });
-        toast.success(`تم حذف ${removedIds.size} صنف قبل توقف العملية`);
       }
-      toast.error(errorText(err));
+
+      if (failedIds.length === 0) {
+        setDeleteBlockedDialog(null);
+        toast.success(`تم حذف ${removedIds.size} صنف بنجاح`);
+      } else {
+        if (removedIds.size > 0) {
+          toast.success(`تم حذف ${removedIds.size} صنف وتبقى ${failedIds.length} صنف يحتاج تصفير الرصيد`);
+        }
+        setDeleteBlockedDialog({
+          message: errorText(lastError),
+          blockedIds: failedIds,
+        });
+      }
     } finally {
       setDeletingTicked(false);
     }
+  };
+
+  const handleDeleteSelected = async () => {
+    const ids = [...ticked];
+    if (ids.length === 0 || deletingTicked) return;
+    const confirmed = window.confirm(`هل أنت متأكد من حذف الأصناف المحددة (${ids.length})؟`);
+    if (!confirmed) return;
+    await executeDeleteIds(ids);
   };
 
   const columns = useMemo(
@@ -310,6 +393,16 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
             <Button variant="outline" onClick={() => setBulk("labels")}>
               <Printer aria-hidden />
               {t("labels:print.open")}
+            </Button>
+          ) : null}
+          {canAdjustStock && ticked.size > 0 ? (
+            <Button
+              variant="outline"
+              disabled={zeroingTicked || adjustStock.isPending}
+              onClick={() => void zeroProductsStock([...ticked])}
+            >
+              <Eraser aria-hidden />
+              تصفير أرصدة المنتجات المختارة ({ticked.size})
             </Button>
           ) : null}
           {canEdit && ticked.size > 0 ? (
@@ -450,6 +543,58 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
             {t("common:actions.loadMore")}
           </Button>
         </div>
+      ) : null}
+      {deleteBlockedDialog ? (
+        <Dialog
+          open
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setDeleteBlockedDialog(null);
+          }}
+          title="تعذر حذف بعض الأصناف لوجود رصيد مخزون"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setDeleteBlockedDialog(null)}>
+                إغلاق
+              </Button>
+              {canAdjustStock ? (
+                <Button
+                  variant="secondary"
+                  disabled={zeroingTicked || adjustStock.isPending || deletingTicked}
+                  onClick={() => {
+                    void (async () => {
+                      await zeroProductsStock(deleteBlockedDialog.blockedIds, true);
+                    })();
+                  }}
+                >
+                  <Eraser aria-hidden />
+                  تصفير أرصدة هذه المنتجات ({deleteBlockedDialog.blockedIds.length})
+                </Button>
+              ) : null}
+              {canAdjustStock && canEdit ? (
+                <Button
+                  variant="danger"
+                  disabled={zeroingTicked || adjustStock.isPending || deletingTicked}
+                  onClick={() => {
+                    void (async () => {
+                      const ids = deleteBlockedDialog.blockedIds;
+                      await zeroProductsStock(ids, true);
+                      await executeDeleteIds(ids);
+                    })();
+                  }}
+                >
+                  <Trash2 aria-hidden />
+                  تصفير الأرصدة وحذفها الآن
+                </Button>
+              ) : null}
+            </>
+          }
+        >
+          <p className="rounded-control bg-danger-soft p-3 text-danger">{deleteBlockedDialog.message}</p>
+          <p className="text-sm text-ink-2">
+            عدد الأصناف المتبقية التي تحتاج تصفير الرصيد:{" "}
+            <strong>{deleteBlockedDialog.blockedIds.length}</strong>
+          </p>
+        </Dialog>
       ) : null}
       {open === "new" ? (
         <ProductDialog product={null} session={session} onClose={() => setOpen(null)} />
