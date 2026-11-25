@@ -36,6 +36,7 @@ export function CartPanel({
   onApproval,
   payButton,
   actions,
+  actionsCollapsed = false,
   banner,
   customer,
   notices,
@@ -56,6 +57,8 @@ export function CartPanel({
   onApproval: () => void;
   payButton?: ReactNode;
   actions: ReactNode;
+  /** When true, narrows the vertical action rail to compact icon-only width. */
+  actionsCollapsed?: boolean;
   banner?: ReactNode;
   /** The ticket's customer (F3), under the title. */
   customer?: ReactNode;
@@ -303,10 +306,13 @@ export function CartPanel({
         {payButton ? <div className="border-t border-line bg-surface p-2.5">{payButton}</div> : null}
       </div>
 
-      {/* Vertical column of POS action buttons */}
+      {/* Collapsible vertical column of POS action buttons */}
       <div
         aria-label={t("pos:cart.actions", { defaultValue: "إجراءات الكاشير" })}
-        className="flex w-[112px] shrink-0 flex-col gap-1.5 overflow-y-auto border-s border-line bg-surface-2/60 p-2"
+        className={cn(
+          "flex shrink-0 flex-col gap-1.5 overflow-y-auto border-s border-line bg-surface-2/60 transition-[width,padding] duration-200",
+          actionsCollapsed ? "w-[58px] p-1.5" : "w-[112px] p-2",
+        )}
       >
         {actions}
       </div>
