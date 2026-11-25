@@ -1223,24 +1223,46 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           </>
         )}
       </button>
-      <Button className={pos} onClick={() => setDialog({ kind: "customer" })} {...cap("customer")}>
+      <Button
+        className={pos}
+        title={t("pos:actions.customer")}
+        onClick={() => setDialog({ kind: "customer" })}
+        {...cap("customer")}
+      >
         <User aria-hidden />
         <span>{t("pos:actions.customer")}</span>
       </Button>
-      <Button className={pos} onClick={() => setDialog({ kind: "discount" })} {...cap("discount")}>
+      <Button
+        className={pos}
+        title={t("pos:actions.discount")}
+        onClick={() => setDialog({ kind: "discount" })}
+        {...cap("discount")}
+      >
         <Percent aria-hidden />
         <span>{t("pos:actions.discount")}</span>
       </Button>
-      <Button className={pos} onClick={hold} disabled={!can("sales.hold")} {...cap("hold")}>
+      <Button
+        className={pos}
+        title={t("pos:actions.hold")}
+        onClick={hold}
+        disabled={!can("sales.hold")}
+        {...cap("hold")}
+      >
         <Pause aria-hidden />
         <span>{t("pos:actions.hold")}</span>
       </Button>
-      <Button className={pos} onClick={() => setDialog({ kind: "return" })} {...cap("return")}>
+      <Button
+        className={pos}
+        title={t("pos:actions.return")}
+        onClick={() => setDialog({ kind: "return" })}
+        {...cap("return")}
+      >
         <Undo2 aria-hidden className="rtl:-scale-x-100" />
         <span>{t("pos:actions.return")}</span>
       </Button>
       <Button
         className={pos}
+        title={t("pos:actions.drawer")}
         onClick={() => setDialog({ kind: "drawer" })}
         disabled={!can("cash.paid_in_out")}
         {...cap("drawer")}
@@ -1248,7 +1270,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         <Wallet aria-hidden />
         <span>{t("pos:actions.drawer")}</span>
       </Button>
-      <Button className={pos} onClick={() => setDialog({ kind: "menu" })} {...cap("menu")}>
+      <Button
+        className={pos}
+        title={t("pos:actions.menu")}
+        onClick={() => setDialog({ kind: "menu" })}
+        {...cap("menu")}
+      >
         <Menu aria-hidden />
         <span>{t("pos:actions.menu")}</span>
       </Button>
@@ -1338,12 +1365,4 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                       {t("pos:actions.tables")}
                     </Button>
                   ) : null}
-                  {hardware.isSuccess ? (
-                    <PrinterDot
-                      configured={Boolean(hardware.data.receiptPrinterId)}
-                      onOpen={() => openDialog({ kind: "unprinted" })}
-                    />
-                  ) : null}
-                  <SyncPill session={session} />
-                  {fromQuote ? (
-                    <span role="status" className="rounde
+       
