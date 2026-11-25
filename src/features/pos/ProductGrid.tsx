@@ -2,7 +2,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Amount } from "@/components/amount";
-import { useLightMode } from "@/lib/display";
 import { useAppDataDir } from "@/lib/ipc/app";
 import { useCategories } from "@/lib/ipc/catalog";
 import { useProductGrid } from "@/lib/ipc/products";
@@ -16,11 +15,9 @@ import { cn, initials } from "@/lib/utils";
 const TILE = 120;
 const GAP = 8;
 
-/** Category chips, then square tiles of `--pos-tile` (7.5rem, 6rem in light mode; rem follows the
- * text size): the photo or the initials on surface-2, the name, the price in bold. Virtualised by
- * rows so 200 tiles stay smooth on a Celeron (spec §10.5, SAL-010); light mode shows initials
- * only. The sale screen keeps the chosen category: the scale panel (F11) offers its weighed
- * products. */
+/** Category chips, then square tiles of `--pos-tile` (7.5rem; rem follows the text size):
+ * shows the product photo when available (with compact labels so nothing crowds or covers it),
+ * or keeps the standard layout with initials when there is no photo. */
 export function ProductGrid({
   onPick,
   category,
@@ -35,9 +32,8 @@ export function ProductGrid({
   const categories = useCategories();
   const grid = useProductGrid(category);
   const hits = grid.data ?? [];
-  const light = useLightMode();
   const scroller = useRef<HTMLDivElement>(null);
-  // As wide as a tile: its size follows light mode and the text size, and the observer sees it.
+  // As wide as a tile: its size follows the text size, and the observer sees it.
   const probe = useRef<HTMLDivElement>(null);
   const [{ columns, tile }, setLayout] = useState({ columns: 5, tile: TILE });
   useEffect(() => {
@@ -106,20 +102,34 @@ export function ProductGrid({
             >
               {hits.slice(row.index * columns, row.index * columns + columns).map((hit) => {
                 const name = localizedName(hit, lang);
+                const hasImage = Boolean(hit.image);
                 return (
                   <button
                     key={hit.id}
                     type="button"
                     onClick={() => onPick(hit)}
-                    className="flex size-[var(--pos-tile,7.5rem)] shrink-0 flex-col justify-between rounded-card border border-line bg-surface p-2 text-start hover:border-brand"
+                    className={cn(
+                      "flex size-[var(--pos-tile,7.5rem)] shrink-0 flex-col justify-between overflow-hidden rounded-card border border-line bg-surface text-start hover:border-brand",
+                      hasImage ? "gap-1 p-1.5" : "p-2",
+                    )}
                   >
-                    {hit.image && !light ? (
+                    {hit.image ? (
                       <TilePhoto image={hit.image} fallback={initials(name)} />
                     ) : (
                       <Initials text={initials(name)} />
                     )}
-                    <span className="line-clamp-2 text-sm leading-tight font-semibold">{name}</span>
-                    <Amount value={hit.sellPrice} className="font-bold" />
+                    <span
+                      className={cn(
+                        "leading-tight font-semibold",
+                        hasImage ? "line-clamp-1 text-[11px]" : "line-clamp-2 text-sm",
+                      )}
+                    >
+                      {name}
+                    </span>
+                    <Amount
+                      value={hit.sellPrice}
+                      className={cn("font-bold", hasImage ? "text-xs leading-none" : "text-sm")}
+                    />
                   </button>
                 );
               })}
@@ -135,17 +145,22 @@ function Initials({ text }: { text: string }) {
   return (
     <span
       aria-hidden
-      className="grid h-10 w-full place-items-center rounded-control bg-surface-2 font-bold text-ink-2"
+      className="grid h-10 w-full shrink-0 place-items-center rounded-control bg-surface-2 font-bold text-ink-2"
     >
       {text}
     </span>
   );
 }
 
-/** The product's thumbnail (`<data>/media`) in the initials' place; the name is under it. */
+/** The product's thumbnail (`<data>/media`) in the initials' place; falls back cleanly to
+ * initials if the image fails to load. */
 function TilePhoto({ image, fallback }: { image: string; fallback: string }) {
   const dataDir = useAppDataDir().data;
-  const src = dataDir ? mediaUrl(dataDir, image, true) : null;
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [image]);
+  const src = dataDir && !failed ? mediaUrl(dataDir, image, true) : null;
   if (!src) return <Initials text={fallback} />;
   return (
     <img
@@ -154,7 +169,8 @@ function TilePhoto({ image, fallback }: { image: string; fallback: string }) {
       aria-hidden
       loading="lazy"
       decoding="async"
-      className="h-10 w-full rounded-control bg-surface-2 object-cover"
+      onError={() => setFailed(true)}
+      className="min-h-0 w-full flex-1 rounded-control bg-surface-2 object-cover"
     />
   );
 }
