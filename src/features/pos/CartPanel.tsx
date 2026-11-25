@@ -1,16 +1,26 @@
-import type { ReactNode } from "react";
+import { LogOut } from "lucide-react";
+import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Amount } from "@/components/amount";
+import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { approvalPermission } from "@/lib/approval";
 import { formatDZD } from "@/lib/format";
+import { useLogout, useSession } from "@/lib/ipc/auth";
 import type { PaymentPreview } from "@/lib/ipc/types";
+import { localizedName } from "@/lib/names";
 import { formatQty } from "@/lib/numeric";
 import { useErrorText } from "@/lib/use-error-text";
 import { useLang } from "@/lib/use-language";
 import { cn } from "@/lib/utils";
 import { type DraftLine } from "./cart-store";
 import type { PricedCartLine } from "./use-cart-preview";
+
+export interface CashierUserBadgeInfo {
+  id?: string | null;
+  displayName?: string | null;
+  roleName?: string | null;
+}
 
 /** End column (spec §10.5): lines, totals, the amount-due band, the pay button and the POS
  * buttons. Every figure comes from the backend's preview; before it answers, a line shows "…". */
@@ -29,6 +39,8 @@ export function CartPanel({
   banner,
   customer,
   notices,
+  user,
+  onLogout,
 }: {
   lines: DraftLine[];
   selected: number | null;
@@ -48,20 +60,88 @@ export function CartPanel({
   customer?: ReactNode;
   /** M8 pharmacy: what is said under a product's line (a cheaper generic, the Chifa price). */
   notices?: (index: number, productId: string) => ReactNode;
+  /** Optional explicit user info; falls back to the active session when omitted. */
+  user?: CashierUserBadgeInfo | null;
+  /** Optional logout handler; falls back to `useLogout()` mutation when omitted. */
+  onLogout?: () => void;
 }) {
   const { t } = useTranslation();
   const lang = useLang();
   const errorText = useErrorText();
+  const session = useSession().data;
+  const logoutMutation = useLogout();
+
+  const resolvedUserId = user?.id !== undefined ? user.id : (session?.userId ?? null);
+  const resolvedUserName =
+    user?.displayName !== undefined
+      ? user.displayName
+      : (session?.displayName ?? session?.username ?? "");
+  const resolvedRoleName =
+    user?.roleName !== undefined
+      ? user.roleName
+      : session
+        ? localizedName(
+            {
+              nameAr: session.roleNameAr,
+              nameFr: session.roleNameFr,
+              nameEn: session.roleNameEn,
+            },
+            lang,
+          ) || (session.isOwner ? "المالك" : null)
+        : null;
+
+  const handleLogoutClick = () => {
+    if (onLogout) {
+      onLogout();
+      return;
+    }
+    if (!logoutMutation.isPending) {
+      logoutMutation.mutate();
+    }
+  };
+
   const totals = preview?.cart.totals;
   const ht = preview?.cart.priceMode === "ht";
   const settlement = preview?.settlement;
   // a slow answer dims the figures about to change; a quick one never shows the dimming
   const pending = stale ? "opacity-60 transition-opacity delay-300" : "transition-opacity";
+
   return (
     <aside className="flex w-[440px] shrink-0 flex-col border-s border-line bg-surface max-[1100px]:w-[400px]">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-xl font-bold">{t("pos:cart.title")}</h2>
-        {banner}
+      <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <h2 className="shrink-0 text-xl font-bold">{t("pos:cart.title")}</h2>
+
+          {resolvedUserName || resolvedUserId ? (
+            <div className="flex min-w-0 items-center gap-2 rounded-full border border-line bg-surface-2 py-1 ps-1 pe-2">
+              <Avatar
+                name={resolvedUserName || "?"}
+                userId={resolvedUserId}
+                className="size-7 text-xs"
+              />
+              <div className="flex min-w-0 flex-col leading-tight">
+                {resolvedUserName ? (
+                  <span className="truncate text-xs font-bold text-ink">{resolvedUserName}</span>
+                ) : null}
+                {resolvedRoleName ? (
+                  <span className="truncate text-[11px] text-ink-2">{resolvedRoleName}</span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={handleLogoutClick}
+                disabled={logoutMutation.isPending}
+                aria-label={t("auth:logout", { defaultValue: "تسجيل الخروج" })}
+                title={t("auth:logout", { defaultValue: "تسجيل الخروج" })}
+                className="ms-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
+              >
+                <LogOut aria-hidden className="size-3.5 rtl:rotate-180" />
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {banner ? <div className="shrink-0">{banner}</div> : null}
       </div>
       {customer}
       <ul aria-label={t("pos:cart.title")} className="min-h-0 flex-1 overflow-y-auto">
