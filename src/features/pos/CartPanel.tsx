@@ -22,8 +22,8 @@ export interface CashierUserBadgeInfo {
   roleName?: string | null;
 }
 
-/** End column (spec §10.5): lines, totals, the amount-due band, the pay button and the POS
- * buttons. Every figure comes from the backend's preview; before it answers, a line shows "…". */
+/** End column (spec §10.5): lines, totals, the amount-due band, the pay button and the vertical
+ * POS action strip. Every figure comes from the backend's preview; before it answers, a line shows "…". */
 export function CartPanel({
   lines,
   selected,
@@ -41,6 +41,7 @@ export function CartPanel({
   notices,
   user,
   onLogout,
+  className,
 }: {
   lines: DraftLine[];
   selected: number | null;
@@ -64,6 +65,7 @@ export function CartPanel({
   user?: CashierUserBadgeInfo | null;
   /** Optional logout handler; falls back to `useLogout()` mutation when omitted. */
   onLogout?: () => void;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const lang = useLang();
@@ -107,188 +109,206 @@ export function CartPanel({
   const pending = stale ? "opacity-60 transition-opacity delay-300" : "transition-opacity";
 
   return (
-    <aside className="flex w-[440px] shrink-0 flex-col border-s border-line bg-surface max-[1100px]:w-[400px]">
-      <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <h2 className="shrink-0 text-xl font-bold">{t("pos:cart.title")}</h2>
+    <aside
+      className={cn(
+        "flex min-h-0 min-w-0 flex-1 overflow-hidden bg-surface",
+        className,
+      )}
+    >
+      {/* Receipt + totals + due band + pay button */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="shrink-0 text-lg font-bold">{t("pos:cart.title")}</h2>
 
-          {resolvedUserName || resolvedUserId ? (
-            <div className="flex min-w-0 items-center gap-2 rounded-full border border-line bg-surface-2 py-1 ps-1 pe-2">
-              <Avatar name={resolvedUserName || "?"} userId={resolvedUserId} />
-              <div className="flex min-w-0 flex-col leading-tight">
-                {resolvedUserName ? (
-                  <span className="truncate text-xs font-bold text-ink">{resolvedUserName}</span>
-                ) : null}
-                {resolvedRoleName ? (
-                  <span className="truncate text-[11px] text-ink-2">{resolvedRoleName}</span>
-                ) : null}
+            {resolvedUserName || resolvedUserId ? (
+              <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-surface-2 py-0.5 ps-1 pe-2">
+                <Avatar name={resolvedUserName || "?"} userId={resolvedUserId} />
+                <div className="flex min-w-0 flex-col leading-tight">
+                  {resolvedUserName ? (
+                    <span className="truncate text-xs font-bold text-ink">{resolvedUserName}</span>
+                  ) : null}
+                  {resolvedRoleName ? (
+                    <span className="truncate text-[10px] text-ink-2">{resolvedRoleName}</span>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogoutClick}
+                  disabled={logoutMutation.isPending}
+                  aria-label={t("auth:logout", { defaultValue: "تسجيل الخروج" })}
+                  title={t("auth:logout", { defaultValue: "تسجيل الخروج" })}
+                  className="ms-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
+                >
+                  <LogOut aria-hidden className="size-3.5 rtl:rotate-180" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleLogoutClick}
-                disabled={logoutMutation.isPending}
-                aria-label={t("auth:logout", { defaultValue: "تسجيل الخروج" })}
-                title={t("auth:logout", { defaultValue: "تسجيل الخروج" })}
-                className="ms-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
-              >
-                <LogOut aria-hidden className="size-3.5 rtl:rotate-180" />
-              </button>
+            ) : null}
+          </div>
+
+          {banner ? <div className="flex min-w-0 shrink-0 items-center">{banner}</div> : null}
+        </div>
+
+        {customer}
+
+        <ul aria-label={t("pos:cart.title")} className="min-h-0 flex-1 overflow-y-auto">
+          {lines.length === 0 ? <li className="p-6 text-ink-2">{t("pos:cart.empty")}</li> : null}
+          {lines.map((draft, index) => {
+            const figures = priced[index];
+            return (
+              <li key={draft.key}>
+                <button
+                  type="button"
+                  aria-current={index === selected ? "true" : undefined}
+                  // Spec §10.5 "tap to edit": a first tap selects the line, a tap on the selected
+                  // line opens it (double-click still does, for the mouse)
+                  onClick={() => (index === selected ? onEdit(index) : onSelect(index))}
+                  onDoubleClick={() => onEdit(index)}
+                  className={cn(
+                    "flex w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-start",
+                    index === selected ? "bg-brand-soft" : "hover:bg-surface-2",
+                  )}
+                >
+                  <span className="flex flex-col">
+                    <span className="font-semibold">
+                      {t("pos:cart.line", {
+                        qty: formatQty(draft.line.qty, lang),
+                        name: figures?.description ?? draft.display.name,
+                      })}
+                    </span>
+                    {figures && figures.amounts.discountAmount !== 0 ? (
+                      <span className="text-sm text-ok">
+                        {/* PRM-005/006, PRC-003: an automatic discount says where it comes from */}
+                        <span>
+                          {figures.autoDiscount
+                            ? (figures.autoDiscount.label ?? t("pos:cart.customerDiscount"))
+                            : t("pos:cart.discount")}
+                        </span>{" "}
+                        <Amount value={-figures.amounts.discountAmount} />
+                      </span>
+                    ) : null}
+                    {figures?.priceChanged ? (
+                      <span className="text-sm text-warn">{t("pos:cart.priceChanged")}</span>
+                    ) : null}
+                    {/* M8: a regulated staple's ceiling (SAL-030), the customer's agreed price, a
+                        wholesale minimum not reached */}
+                    {figures?.regulated ? (
+                      <span
+                        className={cn(
+                          "w-fit rounded-sm px-1 text-sm",
+                          figures.regulated.above ? "bg-danger-soft text-danger" : "text-ink-2",
+                        )}
+                      >
+                        {t("pos:cart.regulated", { ceiling: formatDZD(figures.regulated.ceiling, lang) })}{" "}
+                        {figures.regulated.above ? <span>{t("pos:cart.above")}</span> : null}
+                      </span>
+                    ) : null}
+                    {figures?.customerPrice ? (
+                      <span className="text-sm text-info">{t("pos:cart.customerPrice")}</span>
+                    ) : null}
+                    {figures?.minOrder ? (
+                      <span className="w-fit rounded-sm bg-warn-soft px-1 text-sm text-warn">
+                        {t("pos:cart.minOrder", { qty: formatQty(figures.minOrder, lang) })}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="text-2xl font-bold">
+                    {figures ? (
+                      <Amount value={figures.amounts.totalTtc} />
+                    ) : (
+                      <span aria-label={t("pos:cart.pricing")}>…</span>
+                    )}
+                  </span>
+                </button>
+                {notices && draft.line.productId ? notices(index, draft.line.productId) : null}
+              </li>
+            );
+          })}
+        </ul>
+
+        {error ? (
+          <div
+            role="alert"
+            className="flex flex-col gap-2 border-t border-danger bg-danger-soft px-4 py-2 text-danger"
+          >
+            <p className="text-sm">{errorText(error)}</p>
+            {approvalPermission(error) ? (
+              <Button variant="danger" onClick={onApproval}>
+                {t("pos:cart.askApproval")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Spec §10.5: subtotal, discount, TVA, stamp duty */}
+        <dl
+          role="group"
+          aria-label={t("pos:cart.totals")}
+          aria-busy={stale || undefined}
+          className={cn("grid gap-0.5 border-t border-line px-4 py-2 text-sm", pending)}
+        >
+          <div className="flex justify-between">
+            <dt>{t("pos:cart.items")}</dt>
+            <dd>
+              <bdi dir="ltr">{preview ? formatQty(preview.cart.itemCount, lang) : "0"}</bdi>
+            </dd>
+          </div>
+          {totals ? (
+            <div className="flex justify-between">
+              <dt>{t(ht ? "pos:cart.subtotalHt" : "pos:cart.subtotal")}</dt>
+              <dd>
+                <Amount value={totals.grossTotal} />
+              </dd>
             </div>
           ) : null}
-        </div>
-
-        {banner ? <div className="shrink-0">{banner}</div> : null}
-      </div>
-      {customer}
-      <ul aria-label={t("pos:cart.title")} className="min-h-0 flex-1 overflow-y-auto">
-        {lines.length === 0 ? <li className="p-6 text-ink-2">{t("pos:cart.empty")}</li> : null}
-        {lines.map((draft, index) => {
-          const figures = priced[index];
-          return (
-            <li key={draft.key}>
-              <button
-                type="button"
-                aria-current={index === selected ? "true" : undefined}
-                // Spec §10.5 "tap to edit": a first tap selects the line, a tap on the selected
-                // line opens it (double-click still does, for the mouse)
-                onClick={() => (index === selected ? onEdit(index) : onSelect(index))}
-                onDoubleClick={() => onEdit(index)}
-                className={cn(
-                  "flex w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-start",
-                  index === selected ? "bg-brand-soft" : "hover:bg-surface-2",
-                )}
-              >
-                <span className="flex flex-col">
-                  <span className="font-semibold">
-                    {t("pos:cart.line", {
-                      qty: formatQty(draft.line.qty, lang),
-                      name: figures?.description ?? draft.display.name,
-                    })}
-                  </span>
-                  {figures && figures.amounts.discountAmount !== 0 ? (
-                    <span className="text-sm text-ok">
-                      {/* PRM-005/006, PRC-003: an automatic discount says where it comes from */}
-                      <span>
-                        {figures.autoDiscount
-                          ? (figures.autoDiscount.label ?? t("pos:cart.customerDiscount"))
-                          : t("pos:cart.discount")}
-                      </span>{" "}
-                      <Amount value={-figures.amounts.discountAmount} />
-                    </span>
-                  ) : null}
-                  {figures?.priceChanged ? (
-                    <span className="text-sm text-warn">{t("pos:cart.priceChanged")}</span>
-                  ) : null}
-                  {/* M8: a regulated staple's ceiling (SAL-030), the customer's agreed price, a
-                      wholesale minimum not reached */}
-                  {figures?.regulated ? (
-                    <span
-                      className={cn(
-                        "w-fit rounded-sm px-1 text-sm",
-                        figures.regulated.above ? "bg-danger-soft text-danger" : "text-ink-2",
-                      )}
-                    >
-                      {t("pos:cart.regulated", { ceiling: formatDZD(figures.regulated.ceiling, lang) })}{" "}
-                      {figures.regulated.above ? <span>{t("pos:cart.above")}</span> : null}
-                    </span>
-                  ) : null}
-                  {figures?.customerPrice ? (
-                    <span className="text-sm text-info">{t("pos:cart.customerPrice")}</span>
-                  ) : null}
-                  {figures?.minOrder ? (
-                    <span className="w-fit rounded-sm bg-warn-soft px-1 text-sm text-warn">
-                      {t("pos:cart.minOrder", { qty: formatQty(figures.minOrder, lang) })}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-2xl font-bold">
-                  {figures ? (
-                    <Amount value={figures.amounts.totalTtc} />
-                  ) : (
-                    <span aria-label={t("pos:cart.pricing")}>…</span>
-                  )}
-                </span>
-              </button>
-              {notices && draft.line.productId ? notices(index, draft.line.productId) : null}
-            </li>
-          );
-        })}
-      </ul>
-      {error ? (
-        <div
-          role="alert"
-          className="flex flex-col gap-2 border-t border-danger bg-danger-soft px-4 py-3 text-danger"
-        >
-          <p>{errorText(error)}</p>
-          {approvalPermission(error) ? (
-            <Button variant="danger" onClick={onApproval}>
-              {t("pos:cart.askApproval")}
-            </Button>
+          {totals && totals.discountTotal !== 0 ? (
+            <div className="flex justify-between text-ok">
+              <dt>{t("pos:cart.discount")}</dt>
+              <dd>
+                <Amount value={-totals.discountTotal} />
+              </dd>
+            </div>
           ) : null}
+          {totals && preview?.cart.taxRegime === "reel" ? (
+            <div className="flex justify-between">
+              <dt>{t(ht ? "pos:cart.vatAdded" : "pos:cart.vat")}</dt>
+              <dd>
+                <Amount value={totals.taxTotal} />
+              </dd>
+            </div>
+          ) : null}
+          {settlement && settlement.stampCharged !== 0 ? (
+            <div className="flex justify-between">
+              <dt>{t("pos:cart.stampDuty")}</dt>
+              <dd>
+                <Amount value={settlement.stampCharged} />
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+
+        {/* Bottom-left yellow total + pay button */}
+        <div
+          role="status"
+          aria-label={t("pos:cart.due")}
+          aria-busy={stale || undefined}
+          className="flex items-baseline justify-between bg-brand px-4 py-3 text-brand-ink"
+        >
+          <span className="text-lg font-semibold">{t("pos:cart.due")}</span>
+          <Amount
+            value={settlement?.totalDue ?? 0}
+            className={cn("text-5xl leading-none font-bold", pending)}
+          />
         </div>
-      ) : null}
-      {/* Spec §10.5: subtotal (before discount, in the price mode: TTC, or HT with the TVA added
-          under it), discount, TVA under the réel regime, stamp duty. All backend figures. */}
-      <dl
-        role="group"
-        aria-label={t("pos:cart.totals")}
-        aria-busy={stale || undefined}
-        className={cn("grid gap-1 border-t border-line px-4 py-3", pending)}
-      >
-        <div className="flex justify-between">
-          <dt>{t("pos:cart.items")}</dt>
-          <dd>
-            <bdi dir="ltr">{preview ? formatQty(preview.cart.itemCount, lang) : "0"}</bdi>
-          </dd>
-        </div>
-        {totals ? (
-          <div className="flex justify-between">
-            <dt>{t(ht ? "pos:cart.subtotalHt" : "pos:cart.subtotal")}</dt>
-            <dd>
-              <Amount value={totals.grossTotal} />
-            </dd>
-          </div>
-        ) : null}
-        {totals && totals.discountTotal !== 0 ? (
-          <div className="flex justify-between text-ok">
-            <dt>{t("pos:cart.discount")}</dt>
-            <dd>
-              <Amount value={-totals.discountTotal} />
-            </dd>
-          </div>
-        ) : null}
-        {totals && preview?.cart.taxRegime === "reel" ? (
-          <div className="flex justify-between">
-            <dt>{t(ht ? "pos:cart.vatAdded" : "pos:cart.vat")}</dt>
-            <dd>
-              <Amount value={totals.taxTotal} />
-            </dd>
-          </div>
-        ) : null}
-        {settlement && settlement.stampCharged !== 0 ? (
-          <div className="flex justify-between">
-            <dt>{t("pos:cart.stampDuty")}</dt>
-            <dd>
-              <Amount value={settlement.stampCharged} />
-            </dd>
-          </div>
-        ) : null}
-      </dl>
-      <div
-        role="status"
-        aria-label={t("pos:cart.due")}
-        aria-busy={stale || undefined}
-        className="flex items-baseline justify-between bg-brand px-4 py-3 text-brand-ink"
-      >
-        <span className="text-lg font-semibold">{t("pos:cart.due")}</span>
-        <Amount
-          value={settlement?.totalDue ?? 0}
-          className={cn("text-5xl leading-none font-bold", pending)}
-        />
+        {payButton ? <div className="border-t border-line bg-surface p-2.5">{payButton}</div> : null}
       </div>
-      <div className="flex flex-col gap-2 p-3">
-        {payButton}
-        <div className="grid grid-cols-3 gap-2">{actions}</div>
+
+      {/* Vertical column of POS action buttons */}
+      <div
+        aria-label={t("pos:cart.actions", { defaultValue: "إجراءات الكاشير" })}
+        className="flex w-[112px] shrink-0 flex-col gap-1.5 overflow-y-auto border-s border-line bg-surface-2/60 p-2"
+      >
+        {actions}
       </div>
     </aside>
   );
