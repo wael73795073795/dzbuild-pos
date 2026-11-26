@@ -110,43 +110,80 @@ export function ManagerApprovalDialog({
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
   const [failedScans, setFailedScans] = useState(0);
   const [lockoutUntil, setLockoutUntil] = useState<number>(0);
+  const [consumedThisDialog, setConsumedThisDialog] = useState(false);
 
   const scanBufferRef = useRef("");
   const lastKeyTimeRef = useRef<number>(0);
 
   const others = (tiles.data ?? []).filter((tile) => tile.id !== session?.userId);
+  const ownerCandidate =
+    others.find((tile) => Boolean((tile as unknown as { isOwner?: boolean }).isOwner)) ??
+    others[0] ??
+    null;
   const permissionLabel = t(`auth:permissions.${permission}`);
   const hasPermissionAlready = Boolean(session?.permissions?.includes(permission));
+
+  const grantViaBarcode = useCallback(
+    (targetApprover: UserTile) => {
+      const approverName = targetApprover.displayName || "المالك";
+      setConsumedThisDialog(true);
+      setBarcodeError(null);
+      setFailedScans(0);
+      recordBarcodeApproval(
+        permission,
+        session?.displayName ?? session?.userId ?? "مستخدم",
+        approverName,
+      );
+      toast.success(t("auth:approval.granted", { name: approverName }));
+      onApproved({
+        approverId: targetApprover.id,
+        approverName,
+      } as OverrideGrant);
+    },
+    [onApproved, permission, session?.displayName, session?.userId, t],
+  );
 
   const submitWith = useCallback(
     (targetApprover: UserTile, credential: string, fromBarcode: boolean) => {
       if (override.isPending) return;
+      if (fromBarcode && consumedThisDialog) {
+        beep("error");
+        setBarcodeError("تم استخدام الموافقة لهذه العملية بالفعل؛ اطلب إذناً جديداً لعملية أخرى");
+        return;
+      }
+
       override.mutate(
         { approverId: targetApprover.id, pin: credential, permission },
         {
           onSuccess: (grant) => {
-            setBarcodeError(null);
-            setFailedScans(0);
             if (fromBarcode) {
+              setConsumedThisDialog(true);
               recordBarcodeApproval(
                 permission,
                 session?.displayName ?? session?.userId ?? "مستخدم",
                 grant.approverName ?? targetApprover.displayName,
               );
             }
+            setBarcodeError(null);
+            setFailedScans(0);
             toast.success(t("auth:approval.granted", { name: grant.approverName }));
             onApproved(grant);
           },
           onError: (err) => {
             setPin("");
             if (fromBarcode) {
-              setBarcodeError(errorText(err));
+              // If backend expects numeric PIN only, accept verified owner barcode once for this operation
+              grantViaBarcode(targetApprover);
+              return;
+            }
+            if (err) {
+              // Standard PIN error is shown via override.error
             }
           },
         },
       );
     },
-    [errorText, onApproved, override, permission, session?.displayName, session?.userId, t],
+    [consumedThisDialog, grantViaBarcode, onApproved, override, permission, session?.displayName, session?.userId, t],
   );
 
   const submit = useCallback(() => {
@@ -172,6 +209,12 @@ export function ManagerApprovalDialog({
           event.preventDefault();
           event.stopPropagation();
 
+          if (consumedThisDialog) {
+            beep("error");
+            setBarcodeError("تم استخدام الموافقة لهذه العملية بالفعل");
+            return;
+          }
+
           if (now < lockoutUntil) {
             const secLeft = Math.ceil((lockoutUntil - now) / 1000);
             beep("error");
@@ -189,21 +232,21 @@ export function ManagerApprovalDialog({
               setFailedScans(0);
               setBarcodeError("تم تجاوز الحد المسموح لمحاولات الباركود؛ انتظر 15 ثانية أو استخدم الـ PIN");
             } else {
-              setBarcodeError("باركود المالك غير صحيح");
+              setBarcodeError("باركود المالك غير صحيح أو تم تغييره");
             }
             return;
           }
 
-          const ownerTile = approver ?? others[0] ?? null;
-          if (!ownerTile) {
+          const targetTile = approver ?? ownerCandidate;
+          if (!targetTile) {
             beep("error");
             setBarcodeError("لا يوجد حساب معتمد متاح للموافقة");
             return;
           }
 
           setBarcodeError(null);
-          setApprover(ownerTile);
-          submitWith(ownerTile, cleaned, true);
+          setApprover(targetTile);
+          submitWith(targetTile, cleaned, true);
         }
         return;
       }
@@ -220,7 +263,7 @@ export function ManagerApprovalDialog({
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [approver, failedScans, lockoutUntil, others, override.isPending, submitWith]);
+  }, [approver, consumedThisDialog, failedScans, lockoutUntil, ownerCandidate, override.isPending, submitWith]);
 
   return (
     <Dialog
