@@ -16,6 +16,29 @@ import { useLang } from "@/lib/use-language";
 
 type TillChoice = "" | "yes" | "no";
 
+const POS_AVAILABILITY_STORAGE_KEY = "dzpos.products.pos_availability.v1";
+
+function syncBulkPosAvailability(productIds: readonly string[], availableAtTill: boolean): void {
+  if (productIds.length === 0) return;
+  try {
+    const raw = window.localStorage?.getItem(POS_AVAILABILITY_STORAGE_KEY);
+    const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const next: Record<string, boolean> = {};
+    if (current && typeof current === "object") {
+      for (const [k, v] of Object.entries(current)) {
+        if (typeof v === "boolean") next[k] = v;
+      }
+    }
+    for (const id of productIds) {
+      if (id) next[id] = availableAtTill;
+    }
+    window.localStorage?.setItem(POS_AVAILABILITY_STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new CustomEvent("dzpos:pos-availability-updated", { detail: next }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 /**
  * PRD-066/070: one change on every selected product — the category, the VAT rate, whether it is
  * sold at the till, the minimum stock. A field left at "Ne pas changer" is sent as `null` and the
@@ -50,6 +73,9 @@ export function BulkEditDialog({ productIds, onClose }: { productIds: string[]; 
     }));
     edit.mutate(edits, {
       onSuccess: (count) => {
+        if (till === "yes" || till === "no") {
+          syncBulkPosAvailability(productIds, till === "yes");
+        }
         toast.success(t("products:bulkEdit.saved", { count }));
         onClose();
       },
