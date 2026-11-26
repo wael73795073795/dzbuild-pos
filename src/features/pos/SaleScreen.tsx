@@ -1951,3 +1951,4 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     </div>
   );
 }
+
