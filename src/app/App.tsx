@@ -6,12 +6,15 @@ import { Toaster } from "sonner";
 import { OnScreenKeyboard } from "@/components/osk/OnScreenKeyboard";
 import { Splash } from "@/components/splash";
 import { LoginScreen } from "@/features/auth/LoginScreen";
+import type { CustomShortcutEntry } from "@/features/settings/KeysSettings";
+import { hotkeyOf, isTillKey, readCustomKeyMap, type TillAction } from "@/lib/key-map";
 import { i18n, loadBackOffice } from "@/lib/i18n";
 import { useAppReady, useStartupError } from "@/lib/ipc/app";
 import { useSession } from "@/lib/ipc/auth";
 import { toAppError } from "@/lib/ipc/client";
 import { useApplyDisplay } from "@/lib/ipc/display";
 import { useLicenseStatus } from "@/lib/ipc/license";
+import { useTillKeyMap } from "@/lib/ipc/privacy";
 import { useThemePreference } from "@/lib/ipc/settings";
 import { useSetupStatus } from "@/lib/ipc/setup";
 import { createQueryClient } from "@/lib/query";
@@ -37,6 +40,50 @@ const ActivationScreen = lazy(() =>
     default: m.ActivationScreen,
   })),
 );
+
+const CUSTOM_SHORTCUTS_STORAGE_KEY = "dzpos.custom.shortcuts.v1";
+
+const ROUTE_ALIASES: Record<string, string> = {
+  pos: "/pos",
+  sale: "/pos",
+  sales: "/sales",
+  settings: "/settings",
+  products: "/catalog/products",
+  categories: "/catalog/categories",
+  customers: "/customers",
+  suppliers: "/suppliers",
+  inventory: "/inventory",
+  reports: "/reports",
+};
+
+function readCustomShortcutsList(): CustomShortcutEntry[] {
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_SHORTCUTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is CustomShortcutEntry =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as CustomShortcutEntry).id === "string" &&
+        typeof (item as CustomShortcutEntry).label === "string" &&
+        typeof (item as CustomShortcutEntry).target === "string" &&
+        typeof (item as CustomShortcutEntry).key === "string" &&
+        isTillKey((item as CustomShortcutEntry).key),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function resolveRouteTarget(rawTarget: string): string | null {
+  const trimmed = rawTarget.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/")) return trimmed;
+  const normalized = trimmed.toLowerCase();
+  return ROUTE_ALIASES[normalized] ?? null;
+}
 
 export function App() {
   const [client] = useState(createQueryClient);
@@ -100,10 +147,88 @@ function Root() {
   if (!session.data) return <LoginScreen />;
   return (
     <MemoryRouter>
+      <CustomShortcutsRunner />
       {import.meta.env.VITE_E2E === "1" ? <E2eNavigator /> : null}
       <AppRoutes session={session.data} />
     </MemoryRouter>
   );
+}
+
+/** Runs user-defined custom shortcuts (navigation routes or named actions) globally. */
+function CustomShortcutsRunner() {
+  const navigate = useNavigate();
+  const { data: tillMap } = useTillKeyMap();
+  const [shortcuts, setShortcuts] = useState<CustomShortcutEntry[]>(() => readCustomShortcutsList());
+  const [customKeyMap, setCustomKeyMap] = useState<Partial<Record<TillAction, string>>>(() =>
+    readCustomKeyMap(),
+  );
+
+  useEffect(() => {
+    const syncShortcuts = () => setShortcuts(readCustomShortcutsList());
+    const syncKeyMap = () => setCustomKeyMap(readCustomKeyMap());
+    window.addEventListener("dzpos:custom-shortcuts-updated", syncShortcuts);
+    window.addEventListener("dzpos:key-map-updated", syncKeyMap);
+    window.addEventListener("storage", syncShortcuts);
+    window.addEventListener("storage", syncKeyMap);
+    return () => {
+      window.removeEventListener("dzpos:custom-shortcuts-updated", syncShortcuts);
+      window.removeEventListener("dzpos:key-map-updated", syncKeyMap);
+      window.removeEventListener("storage", syncShortcuts);
+      window.removeEventListener("storage", syncKeyMap);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const pressedKey = hotkeyOf(event);
+      if (!pressedKey) return;
+
+      const target = event.target as HTMLElement | null;
+      const inEditable =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable;
+      const isFunctionOrEsc =
+        event.key === "Escape" || /^F([1-9]|1[0-2])$/.test(event.key) || event.ctrlKey || event.altKey;
+      if (inEditable && !isFunctionOrEsc) return;
+
+      const matchedCustom = shortcuts.find((item) => item.key === pressedKey);
+      if (matchedCustom) {
+        const route = resolveRouteTarget(matchedCustom.target);
+        if (route) {
+          event.preventDefault();
+          void navigate(route);
+          return;
+        }
+        event.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent("dzpos:custom-shortcut", {
+            detail: { target: matchedCustom.target, label: matchedCustom.label, key: pressedKey },
+          }),
+        );
+        return;
+      }
+
+      const mappedAction = (Object.entries(customKeyMap) as Array<[TillAction, string | undefined]>).find(
+        ([, key]) => key === pressedKey,
+      )?.[0];
+      const backendAction = (tillMap ?? []).find(([, key]) => key === pressedKey)?.[0];
+      const actionName = mappedAction ?? backendAction;
+      if (actionName && actionName in ROUTE_ALIASES) {
+        const route = ROUTE_ALIASES[actionName];
+        if (route) {
+          event.preventDefault();
+          void navigate(route);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [customKeyMap, navigate, shortcuts, tillMap]);
+
+  return null;
 }
 
 /** E2E only (`VITE_E2E=1`): the specs move the in-memory router without a reload, which would
