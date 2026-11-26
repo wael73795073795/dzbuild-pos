@@ -91,13 +91,9 @@ interface Notice {
   text: string;
 }
 
-/** The modules whose sale needs something asked before the payment (serials, prescriptions, the
- * jeweller register's buyer). */
 const CHECKOUT_MODULES: Module[] = ["serials", "pharmacy", "jewellery"];
-/** The modules whose vouchers or deposits a code read at the till may be. */
 const VOUCHER_MODULES: Module[] = ["gift_vouchers", "loyalty", "orders", "repairs"];
 
-/** The department keys stay in place of the product grid on this till once chosen (VRT-001). */
 const DEPARTMENTS_KEY = "dzpos.till.departments";
 const SPLIT_WIDTH_KEY = "dzpos.till.splitWidth";
 const SPLIT_PINNED_KEY = "dzpos.till.splitPinned";
@@ -127,7 +123,7 @@ function rememberDepartments(on: boolean): void {
   try {
     window.localStorage.setItem(DEPARTMENTS_KEY, on ? "1" : "0");
   } catch {
-    // a blocked storage only forgets the choice at the next start
+    // ignore storage errors
   }
 }
 
@@ -184,7 +180,6 @@ function rememberRailCollapsed(collapsed: boolean): void {
   }
 }
 
-/** Safe recursive-descent math parser supporting +, -, *, /, parentheses, and decimals. */
 function evaluateBasicMath(expr: string): string {
   const cleaned = expr.replace(/×/g, "*").replace(/÷/g, "/").replace(/\s+/g, "");
   if (!cleaned) return "0";
@@ -194,14 +189,12 @@ function evaluateBasicMath(expr: string): string {
   if (!tokens || tokens.join("") !== cleaned) return "خطأ";
 
   let pos = 0;
-
   const peek = (): string | undefined => tokens[pos];
   const consume = (): string | undefined => tokens[pos++];
 
   const parseExpression = (): number | null => {
     let value = parseTerm();
     if (value === null) return null;
-
     while (peek() === "+" || peek() === "-") {
       const op = consume();
       const right = parseTerm();
@@ -214,7 +207,6 @@ function evaluateBasicMath(expr: string): string {
   const parseTerm = (): number | null => {
     let value = parseFactor();
     if (value === null) return null;
-
     while (peek() === "*" || peek() === "/") {
       const op = consume();
       const right = parseFactor();
@@ -232,14 +224,12 @@ function evaluateBasicMath(expr: string): string {
   const parseFactor = (): number | null => {
     const token = peek();
     if (!token) return null;
-
     if (token === "+" || token === "-") {
       consume();
       const next = parseFactor();
       if (next === null) return null;
       return token === "-" ? -next : next;
     }
-
     if (token === "(") {
       consume();
       const inside = parseExpression();
@@ -247,13 +237,11 @@ function evaluateBasicMath(expr: string): string {
       consume();
       return inside;
     }
-
     if (/^\d+(?:\.\d+)?$/.test(token)) {
       consume();
       const num = Number(token);
       return Number.isFinite(num) ? num : null;
     }
-
     return null;
   };
 
@@ -348,7 +336,7 @@ function QuickPriceModal({
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-danger-soft hover:text-danger"
+            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
             <X aria-hidden className="size-4" />
           </button>
@@ -479,7 +467,7 @@ function QuickWeightModal({
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-danger-soft hover:text-danger"
+            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
             <X aria-hidden className="size-4" />
           </button>
@@ -684,7 +672,7 @@ function PosCalculatorModal({
               onClick={onClose}
               title="إغلاق"
               aria-label="إغلاق"
-              className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-danger-soft hover:text-danger"
+              className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
             >
               <X aria-hidden className="size-4" />
             </button>
@@ -793,8 +781,6 @@ function SupermarketCartIcon({
   );
 }
 
-/** `/pos` (spec §10.5): full window, keyboard-first and barcode-first (UX-010, UX-016, SAL-012).
- * `withTables`: the restaurant's floor is one tap away (UX-020, the "mixed" till mode). */
 export function SaleScreen({ session, withTables = false }: { session: Session; withTables?: boolean }) {
   const { t } = useTranslation();
   const lang = useLang();
@@ -808,7 +794,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const can = (p: Session["permissions"][number]) => session.permissions.includes(p);
   const held = useHeldCarts(can("sales.hold"));
   const findByCode = useFindByCode();
-  // on a till, a code unknown here may be a product the main PC created a moment ago
   const lan = useTillLink();
   const searchHost = useSearchHost();
   const syncNow = useSyncNow();
@@ -817,7 +802,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const approval = useApproval();
   const preview = useCartPreview();
   const units = useUnits().data;
-  // Settings › Payments: how this till takes payment (asked, or one method at once)
   const tillPayment = useTillPayment();
   const finishSale = useFinishSale(approval.run);
   const previewSale = usePreviewSale().mutateAsync;
@@ -832,7 +816,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const lastScan = useCart((s) => s.lastScan);
   const exchange = useCart((s) => s.exchange);
   const fromQuote = useCart((s) => s.fromQuote);
-  // M8: the pack modules on, the till's keys (UX-017) and the van it sells from (VRT-101)
   const queryClient = useQueryClient();
   const modules = usePackModules();
   const keys = useKeyMap();
@@ -840,22 +823,17 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [departmentsOn, setDepartmentsOn] = useState(rememberedDepartments);
   const departments = departmentsOn && modules.includes("department_keys");
 
-  // Full-height split between left POS/receipt panel and right products/search panel
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState<number>(rememberedSplitWidth);
   const [splitPinned, setSplitPinned] = useState<boolean>(rememberedSplitPinned);
   const [railCollapsed, setRailCollapsed] = useState<boolean>(rememberedRailCollapsed);
   const [draggingSplit, setDraggingSplit] = useState(false);
 
-  // Calculator, quick price, and quick weight modals
   const [calcOpen, setCalcOpen] = useState(false);
   const [quickPriceOpen, setQuickPriceOpen] = useState(false);
   const [quickWeightOpen, setQuickWeightOpen] = useState(false);
   const anySubModal = calcOpen || quickPriceOpen || quickWeightOpen;
 
-  // the sales history sends a ticket to take items back from (RET-002); the repair board, a ready
-  // ticket to hand back (M8, `{ pickup: ticketId }`); an order's page, the order to serve (M8,
-  // `{ fulfil: orderId }`)
   const routed = location.state as { returnNumber?: string; pickup?: string; fulfil?: string } | null;
   const returnNumber = routed?.returnNumber;
   const pickup = routed?.pickup;
@@ -872,13 +850,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [notice, setNotice] = useState<Notice | null>(null);
   const [text, setText] = useState("");
   const [category, setCategory] = useState<string | null>(null);
-  // F11's weight, shown on the customer display while the scale panel is open (VRT-010)
   const [weighing, setWeighing] = useState<Weighing | null>(null);
   const scanRef = useRef<HTMLInputElement>(null);
   const docLang = company.data?.defaultDocLang ?? session.lang;
   const empty = lines.length === 0;
 
-  // Ambient supermarket cart track state: 0..100% cycle progress, pause waiting alert, and idle roaming
   const prevLinesLengthRef = useRef<number>(lines.length);
   const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
   const [waitingForNextItem, setWaitingForNextItem] = useState(false);
@@ -987,19 +963,14 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     return () => window.clearInterval(timer);
   }, [anySubModal, approval.pending, dialog, lastActivityAt, lines.length]);
 
-  // an empty cart (a new sale) takes the shop's document language again, whatever the last
-  // receipt was printed in
   useEffect(() => {
     if (empty) useCart.getState().setLang(docLang);
   }, [docLang, empty]);
 
-  // focus returns to the scan field whenever no dialog holds it (UX-010)
   useEffect(() => {
     if (dialog === null && !anySubModal && !approval.pending) scanRef.current?.focus();
   }, [anySubModal, approval.pending, dialog]);
 
-  // the ticket sent by the sales history (or the repair board, or an order's page) is consumed: the
-  // screen mounting again on this history entry (after a lock, say) does not open it a second time
   useEffect(() => {
     if (returnNumber || pickup || fulfil) void navigate(location.pathname, { replace: true, state: null });
   }, [returnNumber, pickup, fulfil, location.pathname, navigate]);
@@ -1009,7 +980,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [],
   );
 
-  // SAL-025: a product sold by serial asks one serial per piece as soon as it is rung up
   const askSerials = useCallback(
     async (productId: string) => {
       const line = useCart.getState().selected;
@@ -1024,7 +994,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const addProduct = useCallback(
     (product: TillProduct, qty: number, unitDecimals: number, separate = false) => {
       if (product.kind === "variant_parent") {
-        // SAL-023: the size × colour grid of the model, with the variant grid module
         if (modules.includes("variant_grid")) {
           setDialog({ kind: "pack", view: { kind: "variants", parent: product as ProductHit } });
           return;
@@ -1052,72 +1021,69 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [askSerials, lang, modules, notify, t],
   );
 
-  // Quick price: if customName is provided, use it directly without pulling an internal name;
-  // otherwise use "صنف بدون باركود" (and pull its DB product if registered, else fallback).
+  // Quick price: uses exact entered price without extra scaling or fallback 1.00 override
   const handleQuickPriceSubmit = useCallback(
     async ({ price, customName }: { price: number; customName?: string }) => {
       const scaledPrice = Math.round(price * 1_000);
-      if (customName) {
-        useCart.getState().addProduct({
-          productId: "quick-price-custom",
-          qty: 1_000,
-          display: {
-            name: customName,
-            unitCode: "PCS",
-            unitDecimals: 0,
-            price: scaledPrice,
-            latinName: customName,
-          },
-          separate: true,
-        });
-        beep("ok");
-        setNotice(null);
-        return;
-      }
+      const finalName = customName || DEFAULT_NO_BARCODE_NAME;
 
-      try {
-        const hit = await findByCode.mutateAsync(NO_BARCODE_LOOKUP_CODE);
-        if (hit) {
-          useCart.getState().addProduct({
-            productId: hit.product.id,
-            qty: 1_000,
-            display: {
-              name: localizedName(hit.product, lang) || DEFAULT_NO_BARCODE_NAME,
-              unitCode: hit.product.unitCode,
-              unitDecimals: unitDecimalsOf(hit.product, units),
-              price: scaledPrice,
-              latinName: hit.product.nameFr.trim() || hit.product.nameEn.trim() || DEFAULT_NO_BARCODE_NAME,
-            },
-            separate: true,
-          });
-          beep("ok");
-          setNotice(null);
-          return;
+      if (!customName) {
+        try {
+          const hit = await findByCode.mutateAsync(NO_BARCODE_LOOKUP_CODE);
+          if (hit) {
+            useCart.getState().addLine(
+              {
+                productId: hit.product.id,
+                description: null,
+                qty: 1_000,
+                unitPrice: scaledPrice,
+                discount: { kind: "none" },
+                taxRateId: null,
+                note: null,
+                expectedUnitPrice: scaledPrice,
+              },
+              {
+                name: localizedName(hit.product, lang) || DEFAULT_NO_BARCODE_NAME,
+                unitCode: hit.product.unitCode,
+                unitDecimals: unitDecimalsOf(hit.product, units),
+                price: scaledPrice,
+                latinName: hit.product.nameFr.trim() || hit.product.nameEn.trim() || DEFAULT_NO_BARCODE_NAME,
+              },
+            );
+            beep("ok");
+            setNotice(null);
+            return;
+          }
+        } catch {
+          // Fallback to local open/quick line when lookup is absent
         }
-      } catch {
-        // Fallback when the fixed no-barcode item is not yet added to DB
       }
 
-      useCart.getState().addProduct({
-        productId: "quick-no-barcode",
-        qty: 1_000,
-        display: {
-          name: DEFAULT_NO_BARCODE_NAME,
+      useCart.getState().addLine(
+        {
+          productId: null,
+          description: finalName,
+          qty: 1_000,
+          unitPrice: scaledPrice,
+          discount: { kind: "none" },
+          taxRateId: null,
+          note: null,
+          expectedUnitPrice: scaledPrice,
+        },
+        {
+          name: finalName,
           unitCode: "PCS",
           unitDecimals: 0,
           price: scaledPrice,
-          latinName: DEFAULT_NO_BARCODE_NAME,
+          latinName: finalName,
         },
-        separate: true,
-      });
+      );
       beep("ok");
       setNotice(null);
     },
     [findByCode, lang, units],
   );
 
-  // Quick weight: matches scale label reading (grams in thousandths, e.g. 500 -> 500, or 0.5 -> 500),
-  // looks up product by barcode, multiplies unit/kg price by weight, and adds to cart.
   const handleQuickWeightSubmit = useCallback(
     async ({ weightValue, barcode }: { weightValue: number; barcode: string }) => {
       const qtyThousandths =
@@ -1136,7 +1102,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           toast.error(`لم يتم العثور على باركود: ${barcode}`);
           return;
         }
-        addProduct(hit.product, qtyThousandths, 3, true);
+        addProduct(hit.product, qtyThousandths, 3, false);
       } catch (error) {
         beep("error");
         toast.error(errorText(error));
@@ -1145,11 +1111,10 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [addProduct, errorText, findByCode],
   );
 
-  // A scale label (spec §8) is a package of its own: its line never merges with another. A price
-  // label whose weight, to the gram, costs a few centimes more or less at the till says so (HW-030).
+  // Merge weighed items of the same product into one row in cart
   const addHit = useCallback(
     (hit: ScanHit) => {
-      addProduct(hit.product, hit.packQty, unitDecimalsOf(hit.product, units), hit.scale !== null);
+      addProduct(hit.product, hit.packQty, unitDecimalsOf(hit.product, units), false);
       if (hit.scale && hit.scale.difference !== 0) {
         notify(
           "info",
@@ -1159,18 +1124,20 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     },
     [addProduct, lang, notify, t, units],
   );
+
   const addWeighed = useCallback(
     ({ product, reading }: WeighedAdd) => {
-      addProduct(product, reading.net, 3, true);
+      addProduct(product, reading.net, 3, false);
       setDialog(null);
     },
     [addProduct],
   );
+
   const addTile = useCallback(
     (hit: ProductHit) => addProduct(hit, 1_000, unitDecimalsOf(hit, units)),
     [addProduct, units],
   );
-  // a product picked from the search results or the grid: whatever was typed is done with
+
   const pickProduct = useCallback(
     (hit: ProductHit) => {
       setText("");
@@ -1184,7 +1151,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       setText("");
       try {
         const hit = await findByCode.mutateAsync(code);
-        // M8: a loyalty card sets the ticket's customer; a voucher is spent at the payment
         const packCode =
           !hit && modules.some((m) => VOUCHER_MODULES.includes(m))
             ? await (await loadTillPacks()).readPackCode(code, modules, t, lang)
@@ -1221,13 +1187,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [addHit, errorText, findByCode, lan.isTill, lan.online, lang, modules, notify, searchHost, syncNow, t],
   );
 
-  // The scanner is read while a dialog is open too (HW-022): its Enter must never validate a
-  // payment nor type a barcode into a card reference. After a sale, a scan starts the next one;
-  // elsewhere the cashier is told to close the dialog first. The return and price-check dialogs
-  // read scans in their own fields (`ScanInput`).
   const onScan = (code: string) => {
     if (approval.pending || anySubModal) return;
-    // the "one method" checkout is finishing the cart on screen: a code read now would be lost
     if (quickPaying.current) {
       beep("error");
       return;
@@ -1244,14 +1205,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   };
   const ownScanField = dialog?.kind === "return" || dialog?.kind === "price" || dialog?.kind === "quote";
   useScanner(onScan, { ...scanner, enabled: till.data !== null && !ownScanField && !anySubModal });
-  // a scanner in USB-COM mode reads into the same lookup (HW-020); a dialog that reads its own
-  // scans gets them in its scan field instead
   useSerialScans(onScan, till.data !== null && !ownScanField && !anySubModal);
   useCustomerDisplayFeed(dialog?.kind === "scale" ? weighing : null);
 
-  // Voids and cancellations send the cart as it stands and the backend values it (AUD-001): a
-  // preview may still hold an older cart, or none when it is refused. One at a time, so that a
-  // held-down Delete cannot journal a line twice or remove a line nobody journaled.
   const journaling = useRef(false);
   const runApproved = approval.run;
 
@@ -1260,6 +1216,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       const state = useCart.getState();
       const draft = state.lines[index];
       if (!draft || journaling.current) return false;
+
+      if (!draft.line.productId) {
+        state.remove(index);
+        return true;
+      }
+
       const event = { kind: "line_voided", cart: toCart(state), index } as const;
       journaling.current = true;
       setIsVoiding(true);
@@ -1280,8 +1242,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [errorText, notify, recordEvent, runApproved],
   );
 
-  // Delete key on keyboard removes the selected line (with owner approval via voidLine),
-  // ignoring typing inside inputs/textareas/selects/contenteditable elements.
   useEffect(() => {
     if (dialog !== null || anySubModal || approval.pending || quickBusy || isVoiding) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1297,8 +1257,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [anySubModal, approval.pending, dialog, isVoiding, quickBusy, voidLine]);
 
-  // Lowering a line's quantity is a partial void (SAL-040): journaled with the backend's figures
-  // and under `sales.void_line` before the line changes. `false` when refused or cancelled.
   const reduceQty = useCallback(
     async (index: number, qty: number): Promise<boolean> => {
       const state = useCart.getState();
@@ -1338,9 +1296,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }
   }, [docLang, errorText, notify, recordEvent, runApproved, t]);
 
-  // Spec §10.4 "Undo hold" and F7: a held ticket comes back into an empty cart only, since
-  // loading it would replace the lines on screen without a journal row. This screen owns the
-  // mutation because the hold dialog is gone by the time its toast is clicked.
   const recallCart = recall.mutateAsync;
   const recallHeld = useCallback(
     async (id: string) => {
@@ -1359,8 +1314,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [notify, recallCart, t],
   );
 
-  // A pending exchange belongs to this customer's ticket: holding or recalling a ticket now would
-  // drop the return, or pay another customer's ticket with it.
   const openDialog = useCallback(
     (next: PosDialog) => {
       if ((next.kind === "hold" || next.kind === "held") && useCart.getState().exchange) {
@@ -1379,11 +1332,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const commitDone = useCommitDone((done) => setDialog({ kind: "done", done }));
 
-  // Settings › Payments, "one method": the sale is finished at once in that method, for the exact
-  // amount the backend asks (in cash, the stamp duty and the cash rounding included), through the
-  // same path as the payment dialog's Valider. A pending exchange (its store credit), an unknown
-  // printer default or a method that cannot settle the whole amount opens the dialog instead; a
-  // refusal opens it on the tender tried, with the backend's answer.
   const takePayment = async () => {
     const fixed = tillPayment.fixed;
     if (quickPaying.current) return;
@@ -1395,7 +1343,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     setQuickBusy(true);
     let tenders: Tender[] | undefined;
     try {
-      // UX-004: the receipt in the language of the customer's file, as the dialog prints it
       const customerId = useCart.getState().customerId;
       const customerLang = customerId ? (await fetchCustomer(customerId)).lang : null;
       if (customerLang) useCart.getState().setLang(customerLang);
@@ -1419,8 +1366,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       const done = await finishSale.finish({
         tenders,
         inputs,
-        printReceipt: receiptByDefault
-        (hardware.data),
+        printReceipt: receiptByDefault(hardware.data),
         exchange: null,
       });
       if (done) commitDone(done);
@@ -1432,8 +1378,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     }
   };
 
-  // "Encaisser": with a pack module that asks something of the sale (serials, a prescription, the
-  // buyer of a jewel), its checkout steps come first (`till-packs.tsx`), then the payment
   const pay = () => {
     if (useCart.getState().lines.length === 0 || preview.error || quickPaying.current) return;
     const steps = modules.some((m) => CHECKOUT_MODULES.includes(m));
@@ -1447,8 +1391,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   };
   const flexy = () => setDialog({ kind: "pack", view: { kind: "flexy" } });
 
-  // UX-017: every action through the till's key map; a pack action only while its module is on
-  // (Ctrl+3, the gift voucher, is a pack dialog bound here)
   const handlers: Partial<Record<TillAction, () => void>> = {
     help: () => setDialog({ kind: "help" }),
     search: () => scanRef.current?.focus(),
@@ -1466,7 +1408,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   if (modules.includes("restaurant")) handlers.floor = () => void navigate("/pos/floor");
   if (modules.includes("flexy")) handlers.flexy = flexy;
   if (modules.includes("department_keys")) handlers.department_keys = toggleDepartments;
-  // LOY-001: a gift voucher sold from the till (a pack dialog, its key from the map)
   if (modules.includes("gift_vouchers") && can("sales.create")) {
     handlers.gift_voucher = () => setDialog({ kind: "giftVoucher" });
   }
@@ -1480,12 +1421,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const hotkeys: Partial<Record<Hotkey, () => void>> = { F11: () => setDialog({ kind: "scale" }) };
   for (const action of bound) hotkeys[keys[action]] = handlers[action];
   useHotkeys(hotkeys, dialog === null && !anySubModal && !approval.pending && !quickBusy);
-  /** A button's keycap from the key map. */
+
   const cap = (action: TillAction) => ({
     shortcut: ariaKey(keys[action]),
     shortcutLabel: keyLabel(keys[action], t),
   });
-  // SAL-046: a quote or proforma into the empty cart
+
   useCtrlHotkey(
     "d",
     () => openDialog({ kind: "quote" }),
@@ -1516,15 +1457,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     toggleDepartments,
   };
 
-  // Pharmacy: a cheaper generic replaces the line as a void (journaled, AUD-001) and a new line
   const replaceLine = async (index: number, generic: TillProduct) => {
     const draft = useCart.getState().lines[index];
     if (!draft) return;
     if (await voidLine(index)) addProduct(generic, draft.line.qty, unitDecimalsOf(generic, units));
   };
 
-  // Focus goes back to the scan field after every tap on the screen (a tile, a line, a chip), so
-  // the keyboard model (+, -, *, Del, typed codes) keeps working (UX-010).
   const refocus = (event: PointerEvent<HTMLDivElement>) => {
     if (dialog !== null || anySubModal || approval.pending || draggingSplit) return;
     const target = event.target as HTMLElement;
@@ -1557,7 +1495,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         body={t("pos:closed.body")}
         action={
           <div className="flex gap-2">
-            {can("cash.open") ? (
+                        {can("cash.open") ? (
               <Button variant="primary" size="lg" onClick={() => setDialog({ kind: "openSession" })}>
                 <Wallet aria-hidden />
                 {t("pos:closed.open")}
@@ -1681,8 +1619,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   );
 
   const heldCount = held.data?.length ?? 0;
-  // One tree for the open and the closed till, so the backup alerts (the "database damaged"
-  // alert above all) keep their place and state when the till's state arrives.
+
   return (
     <div
       className={cn(
@@ -1702,14 +1639,14 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       {closed ? (
         closedView
       ) : (
-        <div ref={splitContainerRef} className="relative flex min-h-0 flex-1 overflow-hidden">
-          {/* Full-height red divider spanning top-to-bottom across the entire screen */}
+        <div ref={splitContainerRef} className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
+          {/* Standard theme splitter bar + non-red pin highlight */}
           <div
             style={{ insetInlineStart: `${leftWidth}px` }}
             className={cn(
-              "pointer-events-auto fixed inset-y-0 z-30 flex w-2.5 -translate-x-1/2 flex-col items-center border-x-2 border-danger bg-danger/15 transition-colors rtl:translate-x-1/2",
-              !splitPinned && "cursor-col-resize hover:bg-danger/25",
-              draggingSplit && "bg-danger/30",
+              "pointer-events-auto fixed inset-y-0 z-30 flex w-2.5 -translate-x-1/2 flex-col items-center border-x border-line bg-surface-2/50 transition-colors rtl:translate-x-1/2",
+              !splitPinned && "cursor-col-resize hover:bg-surface-2",
+              draggingSplit && "bg-surface-2",
             )}
             onPointerDown={handleDividerPointerDown}
           >
@@ -1723,8 +1660,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               className={cn(
                 "mt-2 inline-flex size-6 items-center justify-center rounded-md border shadow-xs transition-colors",
                 splitPinned
-                  ? "border-danger bg-danger text-white"
-                  : "border-line bg-surface text-ink-2 hover:border-danger hover:text-danger",
+                  ? "border-amber-500 bg-amber-500 text-slate-950"
+                  : "border-line bg-surface text-ink-2 hover:border-amber-500 hover:text-amber-500",
               )}
             >
               {splitPinned ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
@@ -1852,7 +1789,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               onValueChange={setText}
               multiplier={multiplier}
               onCode={(code) => void lookup(code)}
-              // with one payment method set, Enter on the empty field pays like F12
               onEmptyEnter={tillPayment.fixed ? pay : undefined}
               onPick={pickProduct}
               onMultiplier={(qty) => useCart.getState().setMultiplier(qty)}
@@ -1901,7 +1837,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               ) : null}
             </div>
             {selectedLine ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-danger/30 bg-surface-2/80 px-3 py-2 transition-colors">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface-2/80 px-3 py-2 transition-colors">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="truncate font-semibold">{selectedLine.display.name}</span>
                   <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-semibold text-ink-2">
