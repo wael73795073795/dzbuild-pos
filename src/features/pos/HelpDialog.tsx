@@ -7,7 +7,7 @@ import type { Hotkey } from "@/lib/hotkeys";
 import { DEFAULT_KEYS, type TillAction, keyLabel } from "@/lib/key-map";
 
 /** What each till action does (`pos:help.keys.*`). */
-const ACTION_TEXT: Record<TillAction, string> = {
+const ACTION_TEXT: Partial<Record<TillAction, string>> = {
   help: "f1",
   search: "f2",
   customer: "f3",
@@ -29,6 +29,11 @@ const ACTION_TEXT: Record<TillAction, string> = {
   quick_weight: "quickWeight",
   calculator: "calculator",
   toggle_rail: "toggleRail",
+  screen_pos: "screenPos",
+  screen_settings: "screenSettings",
+  screen_products: "screenProducts",
+  screen_sales: "screenSales",
+  screen_customers: "screenCustomers",
 };
 
 /** The keys no one moves: the scale panel and the cart's own keys. */
@@ -50,6 +55,10 @@ const BASE_ACTIONS: TillAction[] = [
   "menu",
 ];
 
+function resolveActionText(action: TillAction): string {
+  return ACTION_TEXT[action] ?? action;
+}
+
 /** F1: the keyboard map (UX-010, UX-017) as this till binds it (its key map, the packs' actions
  * on), and the way to the help centre's page of the till. */
 export function HelpDialog({
@@ -66,7 +75,7 @@ export function HelpDialog({
   const rows = [
     ...actions.map((action) => ({
       key: keyLabel(keys[action] ?? DEFAULT_KEYS[action], t),
-      text: ACTION_TEXT[action] ?? action,
+      text: resolveActionText(action),
     })),
     ...FIXED.map((key) => ({ key: t(`common:keys.${key}`), text: key })),
   ];
