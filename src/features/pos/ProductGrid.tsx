@@ -16,8 +16,8 @@ const TILE = 120;
 const GAP = 8;
 
 /** Category chips, then square tiles of `--pos-tile` (7.5rem; rem follows the text size):
- * shows the product photo at full quality when available (with compact labels so nothing crowds
- * or covers it), or keeps the standard layout with initials when there is no photo. */
+ * shows the product photo in full without cropping when available, or keeps the standard layout
+ * with initials when there is no photo. */
 export function ProductGrid({
   onPick,
   category,
@@ -33,7 +33,6 @@ export function ProductGrid({
   const grid = useProductGrid(category);
   const hits = grid.data ?? [];
   const scroller = useRef<HTMLDivElement>(null);
-  // As wide as a tile: its size follows the text size, and the observer sees it.
   const probe = useRef<HTMLDivElement>(null);
   const [{ columns, tile }, setLayout] = useState({ columns: 5, tile: TILE });
   useEffect(() => {
@@ -52,7 +51,6 @@ export function ProductGrid({
     return () => observer.disconnect();
   }, []);
   const rows = Math.ceil(hits.length / columns);
-  // The app does not run the React Compiler; the grid re-renders with the virtualizer's state.
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual (spec §10.5)
   const virtualizer = useVirtualizer({
     count: rows,
@@ -61,7 +59,6 @@ export function ProductGrid({
     overscan: 3,
     initialRect: { width: 800, height: 700 },
   });
-  // The rows' cached heights were estimated with the previous tile size.
   useEffect(() => virtualizer.measure(), [virtualizer, tile]);
   const chip = (id: string | null, label: string) => (
     <button
@@ -152,8 +149,7 @@ function Initials({ text }: { text: string }) {
   );
 }
 
-/** The product's high-quality photo (`<data>/media`) in the initials' place; accepts any
- * image format supported by the renderer and falls back cleanly to initials if missing. */
+/** The product's photo (`<data>/media`) shown in full inside the tile without cropping. */
 function TilePhoto({ image, fallback }: { image: string; fallback: string }) {
   const dataDir = useAppDataDir().data;
   const [failed, setFailed] = useState(false);
@@ -170,7 +166,7 @@ function TilePhoto({ image, fallback }: { image: string; fallback: string }) {
       loading="lazy"
       decoding="async"
       onError={() => setFailed(true)}
-      className="min-h-0 w-full flex-1 rounded-control bg-surface-2 object-cover [image-rendering:auto]"
+      className="min-h-0 w-full flex-1 rounded-control bg-surface-2 object-contain [image-rendering:auto]"
     />
   );
 }
