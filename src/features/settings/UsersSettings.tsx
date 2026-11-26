@@ -3,6 +3,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  FileDown,
   KeyRound,
   Pencil,
   Plus,
@@ -47,6 +48,46 @@ type Errors = Partial<Record<string, string>>;
 
 const OWNER_BARCODE_STORAGE_KEY = "dzbuild_owner_barcode_v1";
 const OWNER_BARCODE_SHOW_DIGITS_KEY = "dzbuild_owner_barcode_show_digits_v1";
+
+const BARCODE_DIGIT_PATTERNS: Record<string, string> = {
+  "0": "11121211",
+  "1": "12111221",
+  "2": "11211221",
+  "3": "12211112",
+  "4": "11122112",
+  "5": "12122111",
+  "6": "11222111",
+  "7": "11111222",
+  "8": "12111122",
+  "9": "11211122",
+};
+
+function buildBarcodeBars(code: string): { widthPx: number; dark: boolean }[] {
+  const bars: { widthPx: number; dark: boolean }[] = [
+    { widthPx: 3, dark: true },
+    { widthPx: 3, dark: false },
+    { widthPx: 3, dark: true },
+  ];
+
+  for (const ch of code) {
+    const pattern = BARCODE_DIGIT_PATTERNS[ch] ?? BARCODE_DIGIT_PATTERNS["0"] ?? "11121211";
+    for (let i = 0; i < pattern.length; i += 1) {
+      const units = Number(pattern[i] ?? "1") || 1;
+      bars.push({
+        widthPx: units * 2,
+        dark: i % 2 === 0,
+      });
+    }
+  }
+
+  bars.push(
+    { widthPx: 3, dark: true },
+    { widthPx: 3, dark: false },
+    { widthPx: 3, dark: true },
+  );
+
+  return bars;
+}
 
 function generateNumericOwnerBarcode(length = 16): string {
   const safeLength = Math.max(12, Math.min(20, Math.floor(length)));
@@ -117,42 +158,16 @@ function writeShowBarcodeDigits(show: boolean): void {
   }
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: boolean }) {
-  const digitPatterns: Record<string, string> = {
-    "0": "11121211",
-    "1": "12111221",
-    "2": "11211221",
-    "3": "12211112",
-    "4": "11122112",
-    "5": "12122111",
-    "6": "11222111",
-    "7": "11111222",
-    "8": "12111122",
-    "9": "11211122",
-  };
-
-  const bars: { widthPx: number; dark: boolean }[] = [
-    { widthPx: 3, dark: true },
-    { widthPx: 3, dark: false },
-    { widthPx: 3, dark: true },
-  ];
-
-  for (const ch of code) {
-    const pattern = digitPatterns[ch] ?? digitPatterns["0"] ?? "11121211";
-    for (let i = 0; i < pattern.length; i += 1) {
-      const units = Number(pattern[i] ?? "1") || 1;
-      bars.push({
-        widthPx: units * 2,
-        dark: i % 2 === 0,
-      });
-    }
-  }
-
-  bars.push(
-    { widthPx: 3, dark: true },
-    { widthPx: 3, dark: false },
-    { widthPx: 3, dark: true },
-  );
+  const bars = buildBarcodeBars(code);
 
   return (
     <div className="flex flex-col items-center gap-3 rounded-card border border-line bg-white px-6 py-5 text-black">
@@ -211,44 +226,183 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
     }
   };
 
-  const handlePrint = () => {
-    const printWindow = window.open("", "_blank", "width=560,height=420");
+  const openPrintPreviewWindow = (mode: "print" | "pdf") => {
+    const bars = buildBarcodeBars(barcode);
+    const totalWidthPx = bars.reduce((sum, b) => sum + b.widthPx, 0);
+    const barsHtml = bars
+      .map(
+        (bar) =>
+          `<span style="display:inline-block;width:${bar.widthPx}px;height:112px;background:${
+            bar.dark ? "#000000" : "#ffffff"
+          };flex-shrink:0;"></span>`,
+      )
+      .join("");
+
+    const digitsHtml = showDigits
+      ? `<div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:5px;margin-top:12px;direction:ltr;color:#000000;">${escapeHtml(
+          barcode,
+        )}</div>`
+      : "";
+
+    const html = `<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <title>باركود صلاحية المالك</title>
+    <style>
+      @page {
+        size: auto;
+        margin: 12mm;
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      body {
+        font-family: Tahoma, Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #f4f5f7;
+        color: #111111;
+      }
+      .toolbar {
+        max-width: 640px;
+        margin: 0 auto 16px auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        background: #ffffff;
+        border: 1px solid #d4d7dd;
+        border-radius: 10px;
+        padding: 10px 14px;
+      }
+      .toolbar-hint {
+        font-size: 13px;
+        color: #374151;
+      }
+      .toolbar-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .btn {
+        cursor: pointer;
+        border: 1px solid #111827;
+        background: #111827;
+        color: #ffffff;
+        border-radius: 8px;
+        padding: 7px 14px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .btn.secondary {
+        background: #ffffff;
+        color: #111827;
+      }
+      .sheet {
+        max-width: 640px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #d4d7dd;
+        border-radius: 12px;
+        padding: 28px 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .title {
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 6px;
+        color: #000000;
+      }
+      .subtitle {
+        font-size: 13px;
+        color: #4b5563;
+        margin-bottom: 18px;
+      }
+      .barcode-box {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 18px 22px;
+      }
+      .bars-row {
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+        height: 112px;
+        width: ${totalWidthPx}px;
+        max-width: 100%;
+        overflow: hidden;
+        background: #ffffff;
+      }
+      @media print {
+        body {
+          background: #ffffff;
+          padding: 0;
+        }
+        .toolbar {
+          display: none !important;
+        }
+        .sheet {
+          border: none;
+          border-radius: 0;
+          padding: 12px;
+          max-width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <div class="toolbar-hint">
+        ${
+          mode === "pdf"
+            ? "معاينة الحفظ كـ PDF — اختر (Save as PDF / حفظ كـ PDF) من نافذة الطباعة."
+            : "معاينة الطباعة — تأكد من ظهور الباركود ثم اضغط طباعة."
+        }
+      </div>
+      <div class="toolbar-actions">
+        <button type="button" class="btn" onclick="window.print()">
+          ${mode === "pdf" ? "حفظ PDF" : "طباعة"}
+        </button>
+        <button type="button" class="btn secondary" onclick="window.close()">إغلاق</button>
+      </div>
+    </div>
+    <div class="sheet">
+      <div class="title">باركود صلاحية المالك</div>
+      <div class="subtitle">للموافقة لمرة واحدة على العملية الحالية فقط</div>
+      <div class="barcode-box">
+        <div class="bars-row">${barsHtml}</div>
+        ${digitsHtml}
+      </div>
+    </div>
+    <script>
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          window.print();
+        }, 120);
+      });
+    </script>
+  </body>
+</html>`;
+
+    const printWindow = window.open("", "_blank", "width=760,height=560");
     if (!printWindow) {
       window.print();
       return;
     }
 
-    const digitsHtml = showDigits
-      ? `<div style="font-family: monospace; font-size: 22px; font-weight: 700; letter-spacing: 5px; margin-top: 12px; direction: ltr;">${barcode}</div>`
-      : "";
-
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>باركود صلاحية المالك</title>
-          <style>
-            body {
-              font-family: sans-serif;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              min-height: 92vh;
-              margin: 0;
-              background: #fff;
-              color: #000;
-            }
-            .title { font-size: 16px; font-weight: 700; margin-bottom: 14px; }
-          </style>
-        </head>
-        <body>
-          <div class="title">باركود موافقة المالك</div>
-          <div style="font-family: monospace; font-size: 14px; color: #333;">الرمز الرقمي: ${showDigits ? barcode : "مخفي"}</div>
-          ${digitsHtml}
-          <script>window.onload = function() { window.print(); window.close(); };</script>
-        </body>
-      </html>
-    `);
+    printWindow.document.open();
+    printWindow.document.write(html);
     printWindow.document.close();
   };
 
@@ -270,9 +424,13 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
             {copied ? "تم النسخ" : "نسخ الرقم"}
           </Button>
-          <Button type="button" variant="outline" onClick={handlePrint}>
+          <Button type="button" variant="outline" onClick={() => openPrintPreviewWindow("print")}>
             <Printer aria-hidden />
-            طباعة الباركود
+            معاينة وطباعة
+          </Button>
+          <Button type="button" variant="outline" onClick={() => openPrintPreviewWindow("pdf")}>
+            <FileDown aria-hidden />
+            حفظ PDF
           </Button>
           <Button type="button" variant="primary" onClick={handleRegenerate}>
             <RefreshCw aria-hidden />
@@ -284,10 +442,18 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
       <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
         <NumericScaleBarcode code={barcode} showDigits={showDigits} />
         <div className="max-w-md space-y-1.5 text-sm leading-relaxed text-ink-2">
-          <p>• باركود رقمي فريد بطول <strong>16 رقماً عشوائياً</strong> بحجم واضح وسهل القراءة على ورق عادي أو ليبل.</p>
-          <p>• يمكنك <strong>إخفاء أو إظهار الأرقام</strong> وترك الرسم فقط في أي وقت.</p>
-          <p>• عند الضغط على <strong>توليد باركود جديد</strong> يتوقف الباركود القديم فوراً.</p>
-          <p>• يسري على <strong>العملية الحالية فقط</strong> وبعد انتهائها يتطلب أي طلب جديد إذناً من جديد.</p>
+          <p>
+            • باركود رقمي فريد بطول <strong>16 رقماً عشوائياً</strong> يظهر بكامل أعمدته في المعاينة والطباعة وحفظ الـ PDF.
+          </p>
+          <p>
+            • يمكنك <strong>إخفاء أو إظهار الأرقام</strong> وترك الرسم فقط في أي وقت.
+          </p>
+          <p>
+            • عند الضغط على <strong>توليد باركود جديد</strong> يتوقف الباركود القديم فوراً.
+          </p>
+          <p>
+            • يسري على <strong>العملية الحالية فقط</strong> وبعد انتهائها يتطلب أي طلب جديد إذناً من جديد.
+          </p>
         </div>
       </div>
     </Card>
@@ -369,10 +535,8 @@ export function UsersSettings({ session }: { session: Session }) {
   const [editingUser, setEditingUser] = useState<User | "new" | null>(null);
   const [pinUser, setPinUser] = useState<User | null>(null);
   const [editingRole, setEditingRole] = useState<Role | "new" | null>(null);
-  // USR-015: a new user or role on the model of another
   const [copyingUser, setCopyingUser] = useState<User | null>(null);
   const [copyingRole, setCopyingRole] = useState<Role | null>(null);
-  // Only the owner creates, edits and removes roles (spec §4.5); the commands refuse anyone else.
   const canEditRoles = session.isOwner;
   const failure = update.error ?? deactivate.error ?? removeRole.error;
 
@@ -432,9 +596,6 @@ export function UsersSettings({ session }: { session: Session }) {
                     )}
                   </td>
                   <td>
-                    {/* Icon buttons, named by aria-label and title, and no language column below
-                        xl: labelled buttons pushed the actions out of view below ~1300 px (the
-                        reference PC is 1024×768). */}
                     <div className="flex justify-end gap-1">
                       <Button
                         variant="ghost"
@@ -454,7 +615,6 @@ export function UsersSettings({ session }: { session: Session }) {
                       >
                         <KeyRound aria-hidden />
                       </Button>
-                      {/* the owner is never a model: there is one owner */}
                       {u.isOwner ? null : (
                         <Button
                           variant="ghost"
@@ -781,8 +941,6 @@ function UserDialog({ user, roles, onClose }: { user: User | null; roles: Role[]
   );
 }
 
-/** USR-015: a new user with the role, language and discount limit of `user`, their own name and
- * PIN (hashed by the backend like any PIN). */
 function DuplicateUserDialog({ user, onClose }: { user: User; onClose: () => void }) {
   const { t } = useTranslation();
   const errorText = useErrorText();
