@@ -15,8 +15,7 @@ export interface LineDisplay {
 
 export interface DraftLine {
   key: number;
-  /** `line.separate`: a weighed package (a scale label, F11), a line of its own never merged
-   * into; the backend keeps it with a held ticket. */
+  /** `line.separate`: optional marker kept on the line without blocking same-product merging. */
   line: CartLine;
   display: LineDisplay;
 }
@@ -49,7 +48,7 @@ interface CartData {
 }
 
 interface CartActions {
-  /** `separate`: a weighed package, always a new line that later scans never merge into. */
+  /** Adds a product line and merges into an existing plain line of the same productId. */
   addProduct: (item: { productId: string; qty: number; display: LineDisplay; separate?: boolean }) => void;
   /** Lines of an earlier ticket (SAL-029), at today's prices: no price, discount nor note kept. */
   addLines: (items: { productId: string; qty: number; display: LineDisplay }[]) => void;
@@ -87,18 +86,15 @@ function plain(line: CartLine): boolean {
   return line.unitPrice === null && line.discount.kind === "none" && line.note === null;
 }
 
-/** A plain line of `productId` that a new scan adds its quantity to (a weighed package never). */
+/** A plain line of `productId` that a new scan/weight adds its quantity to. */
 function mergeable(draft: DraftLine, productId: string): boolean {
-  return !draft.line.separate && draft.line.productId === productId && plain(draft.line);
+  return draft.line.productId === productId && plain(draft.line);
 }
 
 function update(lines: DraftLine[], index: number, change: (line: CartLine) => CartLine): DraftLine[] {
   return lines.map((d, i) => (i === index ? { ...d, line: change(d.line) } : d));
 }
 
-/** The selection once line `removed` is gone and `left` lines remain: the line that was selected
- * stays selected; when it is the one removed, the line taking its place (the new last one at the
- * end of the ticket). */
 function selectionAfterRemoval(selected: number | null, removed: number, left: number): number | null {
   if (left === 0) return null;
   if (selected === null || selected === removed) return Math.min(removed, left - 1);
@@ -121,7 +117,7 @@ export const useCart = create<CartState>()((set, get) => ({
     set((s) => {
       const total = s.multiplier === null ? qty : Math.round((s.multiplier * qty) / 1_000);
       const lastScan = { name: display.name, price: display.price, at: Date.now() };
-      const index = separate ? -1 : s.lines.findIndex((d) => mergeable(d, productId));
+      const index = s.lines.findIndex((d) => mergeable(d, productId));
       if (index >= 0) {
         return {
           lines: update(s.lines, index, (l) => ({ ...l, qty: l.qty + total })),
@@ -144,7 +140,6 @@ export const useCart = create<CartState>()((set, get) => ({
       const lines = [...s.lines, { key: nextKey++, line, display }];
       return { lines, selected: lines.length - 1, multiplier: null, lastScan };
     });
-    // NFR-005: the end of the E2E `scan → line` measure (from `dzpos:scan-start`, lib/scanner)
     performance.clearMarks("dzpos:line-added");
     performance.mark("dzpos:line-added");
   },
@@ -270,7 +265,6 @@ export const useCart = create<CartState>()((set, get) => ({
           price: line.unitPrice ?? 0,
         },
       })),
-      // the last line, as after a scan: Del, + and - act on it at once
       selected: cart.lines.length === 0 ? null : cart.lines.length - 1,
       priceLevelId: cart.priceLevelId,
       customerId: cart.customerId,
