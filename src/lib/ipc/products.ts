@@ -9,6 +9,33 @@ import { commands } from "./client";
 import { qk } from "./keys";
 import type { ArchiveFilter, CatalogCursor, Money, ProductHit, ProductInput, SearchQuery } from "./types";
 
+const POS_AVAILABILITY_STORAGE_KEY = "dzpos.products.pos_availability.v1";
+
+function readPosAvailabilityOverrides(): Record<string, boolean> {
+  try {
+    const raw = globalThis.localStorage?.getItem(POS_AVAILABILITY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "boolean") out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function isProductAvailableOnPosGrid(item: unknown, overrides: Record<string, boolean>): boolean {
+  if (!item || typeof item !== "object") return true;
+  const record = item as { id?: unknown; availableAtTill?: unknown };
+  if (typeof record.id === "string" && record.id in overrides) {
+    return Boolean(overrides[record.id]);
+  }
+  return record.availableAtTill !== false;
+}
+
 export function useProduct(id: string | null) {
   return useQuery({
     queryKey: qk.product(id ?? ""),
@@ -30,7 +57,12 @@ export function useProductSearch(query: SearchQuery, enabled = true) {
 export function useProductGrid(categoryId: string | null, limit = 200) {
   return useQuery({
     queryKey: qk.productGrid(categoryId, limit),
-    queryFn: () => commands.productsGrid(categoryId, limit),
+    queryFn: async () => {
+      const items = await commands.productsGrid(categoryId, limit);
+      if (!Array.isArray(items)) return items;
+      const overrides = readPosAvailabilityOverrides();
+      return items.filter((item) => isProductAvailableOnPosGrid(item, overrides));
+    },
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
