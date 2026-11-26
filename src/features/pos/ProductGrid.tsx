@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Amount } from "@/components/amount";
 import { useAppDataDir } from "@/lib/ipc/app";
@@ -14,6 +14,29 @@ import { cn, initials } from "@/lib/utils";
 /** `--pos-tile`'s default (7.5rem) at 16 px, until the probe is measured (and in jsdom). */
 const TILE = 120;
 const GAP = 8;
+
+const POS_AVAILABILITY_STORAGE_KEY = "dzpos.products.pos_availability.v1";
+
+function readPosAvailabilityOverrides(): Record<string, boolean> {
+  try {
+    const raw = window.localStorage?.getItem(POS_AVAILABILITY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "boolean") out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function isAvailableInPosGrid(hit: ProductHit, overrides: Record<string, boolean>): boolean {
+  if (hit.id in overrides) return Boolean(overrides[hit.id]);
+  return hit.availableAtTill !== false;
+}
 
 /** Category chips, then square tiles of `--pos-tile` (7.5rem; rem follows the text size):
  * shows the product photo in full without cropping when available, or keeps the standard layout
@@ -31,7 +54,25 @@ export function ProductGrid({
   const lang = useLang();
   const categories = useCategories();
   const grid = useProductGrid(category);
-  const hits = grid.data ?? [];
+  const [posOverrides, setPosOverrides] = useState<Record<string, boolean>>(() =>
+    readPosAvailabilityOverrides(),
+  );
+
+  useEffect(() => {
+    const sync = () => setPosOverrides(readPosAvailabilityOverrides());
+    window.addEventListener("dzpos:pos-availability-updated", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("dzpos:pos-availability-updated", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  const hits = useMemo(
+    () => (grid.data ?? []).filter((hit) => isAvailableInPosGrid(hit, posOverrides)),
+    [grid.data, posOverrides],
+  );
+
   const scroller = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLDivElement>(null);
   const [{ columns, tile }, setLayout] = useState({ columns: 5, tile: TILE });
