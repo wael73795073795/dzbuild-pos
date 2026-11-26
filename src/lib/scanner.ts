@@ -8,6 +8,98 @@ export const SCAN_MIN_LENGTH = 6;
 export const SCAN_WINDOW_MS = 100;
 export const SCAN_MAX_GAP_MS = 50;
 
+export interface ParsedScaleBarcode {
+  isScale: boolean;
+  rawCode: string;
+  normalizedCode: string;
+  prefix: string;
+  itemCode: string;
+  paddedItemCodes: string[];
+  weightGrams: number | null;
+  weightKg: number | null;
+  priceValue: number | null;
+}
+
+/** Parses EAN/scale barcodes starting with basic scale prefix `2xx` (e.g. 200..299) and builds
+ * zero-padded item code candidates so short/gapped PLUs resolve cleanly. */
+export function parseScaleBarcode(rawInput: string, targetItemLength = 5): ParsedScaleBarcode {
+  const rawCode = rawInput.replace(/\s+/g, "").trim();
+  const digitsOnly = rawCode.replace(/\D+/g, "");
+
+  if (!/^2\d{2}/.test(digitsOnly) || digitsOnly.length < 7) {
+    return {
+      isScale: false,
+      rawCode,
+      normalizedCode: rawCode,
+      prefix: digitsOnly.slice(0, 3),
+      itemCode: digitsOnly,
+      paddedItemCodes: digitsOnly ? [digitsOnly] : [],
+      weightGrams: null,
+      weightKg: null,
+      priceValue: null,
+    };
+  }
+
+  const prefix = digitsOnly.slice(0, 3);
+  const body = digitsOnly.slice(3);
+
+  // Standard 12/13-digit scale EAN: [2xx][5-digit PLU][5-digit weight/price][check]
+  // Or flexible scale code: split item code and weight/price payload cleanly.
+  let itemCode = "";
+  let payload = "";
+
+  if (digitsOnly.length >= 12) {
+    itemCode = body.slice(0, 5);
+    payload = body.slice(5, 10);
+  } else {
+    const splitAt = Math.max(1, Math.min(body.length - 1, targetItemLength));
+    itemCode = body.slice(0, splitAt);
+    payload = body.slice(splitAt);
+  }
+
+  const cleanItem = itemCode.replace(/^0+/, "") || "0";
+  const paddedCandidates = new Set<string>();
+  if (itemCode) paddedCandidates.add(itemCode);
+  if (cleanItem) paddedCandidates.add(cleanItem);
+
+  const safeLen = Math.max(2, Math.min(8, targetItemLength));
+  if (cleanItem.length < safeLen) {
+    paddedCandidates.add(cleanItem.padStart(safeLen, "0"));
+  }
+  if (cleanItem.length < 5) {
+    paddedCandidates.add(cleanItem.padStart(5, "0"));
+  }
+
+  const payloadNum = /^\d+$/.test(payload) ? Number(payload) : null;
+  const weightGrams = payloadNum !== null ? payloadNum : null;
+  const weightKg = weightGrams !== null ? Number((weightGrams / 1000).toFixed(3)) : null;
+  const priceValue = payloadNum !== null ? Number((payloadNum / 100).toFixed(2)) : null;
+
+  const paddedItem = cleanItem.padStart(safeLen, "0");
+  const normalizedCode =
+    digitsOnly.length >= 12
+      ? `${prefix}${paddedItem}${payload}${digitsOnly.slice(12)}`
+      : `${prefix}${paddedItem}${payload}`;
+
+  return {
+    isScale: true,
+    rawCode,
+    normalizedCode,
+    prefix,
+    itemCode,
+    paddedItemCodes: Array.from(paddedCandidates),
+    weightGrams,
+    weightKg,
+    priceValue,
+  };
+}
+
+/** Normalizes a scanned code if it matches the basic `2xx` scale prefix; otherwise returns as-is. */
+export function normalizeScaleBarcode(code: string, targetItemLength = 5): string {
+  const parsed = parseScaleBarcode(code, targetItemLength);
+  return parsed.isScale ? parsed.normalizedCode : code.trim();
+}
+
 type Pair = readonly [string, string];
 
 const DIGITS = Object.fromEntries([..."0123456789"].map((d) => [`Numpad${d}`, [d, d] as Pair]));
@@ -121,13 +213,15 @@ export class ScanDetector {
 
   /** The burst typed so far as a code (its prefix removed), if it was a scan; starts over. */
   private finish(): string | null {
-    const code = this.isScan() ? this.chars.map((c) => c.ch).join("") : null;
+    const rawCode = this.isScan() ? this.chars.map((c) => c.ch).join("") : null;
     this.chars = [];
-    if (code === null) return null;
+    if (rawCode === null) return null;
     markScanStart();
     const prefix = this.options.prefix ?? "";
-    const stripped = prefix && code.startsWith(prefix) ? code.slice(prefix.length) : code;
-    return stripped.length > 0 ? stripped : null;
+    const stripped = prefix && rawCode.startsWith(prefix) ? rawCode.slice(prefix.length) : rawCode;
+    const trimmed = stripped.trim();
+    if (!trimmed) return null;
+    return normalizeScaleBarcode(trimmed);
   }
 
   /** Feeds one keydown; returns the scanned code when this key (Enter/Tab) ends a scan. */
