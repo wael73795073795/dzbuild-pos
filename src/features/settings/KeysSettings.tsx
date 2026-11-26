@@ -7,31 +7,43 @@ import { Card } from "@/components/ui/card";
 import { HostOnlyNote } from "@/features/network/HostOnlyNote";
 import { useTillLink } from "@/lib/ipc/lan";
 import { useSetTillKeyMap, useTillKeyMap } from "@/lib/ipc/privacy";
-import { DEFAULT_KEYS, hotkeyOf, type TillAction } from "@/lib/key-map";
+import {
+  DEFAULT_KEYS,
+  type TillAction,
+  hotkeyOf,
+  isTillKey,
+  readCustomKeyMap,
+  writeCustomKeyMap,
+} from "@/lib/key-map";
+import type { Hotkey } from "@/lib/hotkeys";
 import { useErrorText } from "@/lib/use-error-text";
 import { cn } from "@/lib/utils";
 
-type KeyMap = Record<TillAction, string>;
+type KeyMap = Record<TillAction, Hotkey>;
 
 export interface CustomShortcutEntry {
   id: string;
   label: string;
   target: string;
-  key: string;
+  key: Hotkey;
 }
 
 const CUSTOM_SHORTCUTS_STORAGE_KEY = "dzpos.custom.shortcuts.v1";
 
-const COMMON_PAGE_TARGETS: Array<{ label: string; route: string }> = [
-  { label: "شاشة البيع (POS)", route: "/pos" },
-  { label: "إعدادات البرنامج", route: "/settings" },
-  { label: "المنتجات والأصناف", route: "/catalog/products" },
-  { label: "التصنيفات", route: "/catalog/categories" },
-  { label: "سجل المبيعات", route: "/sales" },
-  { label: "العملاء", route: "/customers" },
-  { label: "الموردون", route: "/suppliers" },
-  { label: "المخزون والجرد", route: "/inventory" },
-  { label: "التقارير", route: "/reports" },
+const COMMON_PAGE_TARGETS: Array<{ label: string; target: string }> = [
+  { label: "شاشة البيع (POS)", target: "/pos" },
+  { label: "إعدادات البرنامج", target: "/settings" },
+  { label: "المنتجات والأصناف", target: "/catalog/products" },
+  { label: "التصنيفات", target: "/catalog/categories" },
+  { label: "سجل المبيعات", target: "/sales" },
+  { label: "العملاء", target: "/customers" },
+  { label: "الموردون", target: "/suppliers" },
+  { label: "المخزون والجرد", target: "/inventory" },
+  { label: "التقارير", target: "/reports" },
+  { label: "سعر سريع", target: "quick_price" },
+  { label: "وزن سريع", target: "quick_weight" },
+  { label: "آلة حاسبة", target: "calculator" },
+  { label: "طي / تمديد الشريط", target: "toggle_rail" },
 ];
 
 const ACTIONS = Object.keys(DEFAULT_KEYS) as TillAction[];
@@ -46,15 +58,22 @@ function loadCustomShortcuts(): CustomShortcutEntry[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item): item is CustomShortcutEntry =>
-        Boolean(item) &&
-        typeof item === "object" &&
-        typeof (item as CustomShortcutEntry).id === "string" &&
-        typeof (item as CustomShortcutEntry).label === "string" &&
-        typeof (item as CustomShortcutEntry).target === "string" &&
-        typeof (item as CustomShortcutEntry).key === "string",
-    );
+    return parsed
+      .filter(
+        (item): item is { id: string; label: string; target: string; key: string } =>
+          Boolean(item) &&
+          typeof item === "object" &&
+          typeof (item as { id?: unknown }).id === "string" &&
+          typeof (item as { label?: unknown }).label === "string" &&
+          typeof (item as { target?: unknown }).target === "string" &&
+          typeof (item as { key?: unknown }).key === "string",
+      )
+      .map((item) => ({
+        id: item.id,
+        label: item.label,
+        target: item.target,
+        key: isTillKey(item.key) ? item.key : "F9",
+      }));
   } catch {
     return [];
   }
@@ -85,24 +104,30 @@ export function KeysSettings() {
   const [customShortcuts, setCustomShortcuts] = useState<CustomShortcutEntry[]>(() =>
     loadCustomShortcuts(),
   );
+  const [selectedPreset, setSelectedPreset] = useState<string>("manual");
   const [newLabel, setNewLabel] = useState("");
-  const [newTarget, setNewTarget] = useState("/settings");
-  const [newKey, setNewKey] = useState<string>("F9");
+  const [newTarget, setNewTarget] = useState("");
+  const [newKey, setNewKey] = useState<Hotkey>("F9");
 
   const current = useMemo(() => {
     const map: KeyMap = { ...DEFAULT_KEYS };
     for (const [action, key] of stored.data ?? []) {
-      if (isAction(action)) map[action] = key;
+      if (isAction(action) && isTillKey(key)) map[action] = key;
+    }
+    const localCustom = readCustomKeyMap();
+    for (const [action, key] of Object.entries(localCustom)) {
+      if (isAction(action) && key && isTillKey(key)) map[action] = key;
     }
     return map;
   }, [stored.data]);
 
   const keys = useMemo<KeyMap>(() => ({ ...current, ...draft }), [current, draft]);
-  const label = (key: string) => (key === "Escape" ? t("common:keys.escape") : key);
-  const actionName = (action: TillAction) => t(`config:keys.actions.${action}`);
+  const labelOfKey = (key: string) => (key === "Escape" ? t("common:keys.escape") : key);
+  const actionName = (action: TillAction) =>
+    t(`config:keys.actions.${action}`, { defaultValue: action });
 
   const findKeyConflict = (
-    candidateKey: string,
+    candidateKey: Hotkey,
     ignoreBuiltIn?: TillAction,
     ignoreCustomId?: string,
   ): string | null => {
@@ -137,7 +162,11 @@ export function KeysSettings() {
           return;
         }
         setTaken(null);
-        setDraft((previous) => ({ ...previous, [capturing]: key }));
+        setDraft((previous) => {
+          const updated = { ...previous, [capturing]: key };
+          writeCustomKeyMap({ ...current, ...updated });
+          return updated;
+        });
         setCapturing(null);
         return;
       }
@@ -174,7 +203,7 @@ export function KeysSettings() {
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [capturing, capturingCustomId, capturingNewKey, customShortcuts, keys]);
+  }, [capturing, capturingCustomId, capturingNewKey, current, customShortcuts, keys]);
 
   const changed = ACTIONS.some((a) => keys[a] !== current[a]);
   const anyCapturing = capturing !== null || capturingCustomId !== null || capturingNewKey;
@@ -182,6 +211,11 @@ export function KeysSettings() {
   const send = (map: Record<string, string>, done: string) =>
     save.mutate(map, {
       onSuccess: () => {
+        if (Object.keys(map).length === 0) {
+          writeCustomKeyMap({ ...DEFAULT_KEYS });
+        } else {
+          writeCustomKeyMap(keys);
+        }
         setDraft({});
         setCapturing(null);
         setCapturingCustomId(null);
@@ -191,35 +225,49 @@ export function KeysSettings() {
       },
     });
 
+  const handlePresetChange = (value: string) => {
+    setSelectedPreset(value);
+    if (value === "manual") return;
+    const found = COMMON_PAGE_TARGETS.find((item) => item.target === value);
+    if (found) {
+      setNewTarget(found.target);
+      if (!newLabel.trim()) setNewLabel(found.label);
+    }
+  };
+
   const handleAddCustomShortcut = () => {
-    const trimmedTarget = newTarget.trim();
-    const trimmedLabel = newLabel.trim() || trimmedTarget;
-    if (!trimmedTarget) {
-      toast.error("أدخل مسار الصفحة أو اسم الإجراء");
+    const chosenTarget =
+      newTarget.trim() || (selectedPreset !== "manual" ? selectedPreset.trim() : "");
+    if (!chosenTarget) {
+      toast.error("اختر شاشة/إجراء أو اكتب اسمه أولاً");
       return;
     }
-    if (!newKey.trim()) {
-      toast.error("حدد مفتاح الاختصار أولاً");
-      return;
-    }
-    const conflictName = findKeyConflict(newKey.trim(), undefined, undefined);
+    const chosenLabel = newLabel.trim() || chosenTarget;
+    const conflictName = findKeyConflict(newKey, undefined, undefined);
     if (conflictName) {
-      setTaken({ key: newKey.trim(), name: conflictName });
+      setTaken({ key: newKey, name: conflictName });
       return;
     }
 
     const entry: CustomShortcutEntry = {
       id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      label: trimmedLabel,
-      target: trimmedTarget,
-      key: newKey.trim(),
+      label: chosenLabel,
+      target: chosenTarget,
+      key: newKey,
     };
     const next = [...customShortcuts, entry];
     setCustomShortcuts(next);
     saveCustomShortcuts(next);
+    if (isAction(chosenTarget)) {
+      const updated = { ...keys, [chosenTarget]: newKey };
+      setDraft(updated);
+      writeCustomKeyMap(updated);
+    }
     setNewLabel("");
+    setNewTarget("");
+    setSelectedPreset("manual");
     setTaken(null);
-    toast.success("تمت إضافة الاختصار المخصص");
+    toast.success("تم حفظ الاختصار الجديد");
   };
 
   const handleDeleteCustomShortcut = (id: string) => {
@@ -227,7 +275,7 @@ export function KeysSettings() {
     setCustomShortcuts(next);
     saveCustomShortcuts(next);
     if (capturingCustomId === id) setCapturingCustomId(null);
-    toast.success("تم حذف الاختصار المخصص");
+    toast.success("تم حذف الاختصار");
   };
 
   return (
@@ -243,96 +291,6 @@ export function KeysSettings() {
           {errorText(stored.error)}
         </p>
       ) : null}
-
-      {/* Custom shortcut builder for any page or feature */}
-      <div className="rounded-xl border border-line bg-surface-2/60 p-3.5">
-        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-bold text-ink">إضافة اختصار جديد لأي صفحة أو ميزة</h3>
-          <div className="flex flex-wrap gap-1.5">
-            {COMMON_PAGE_TARGETS.slice(0, 5).map((preset) => (
-              <button
-                key={preset.route}
-                type="button"
-                onClick={() => {
-                  setNewTarget(preset.route);
-                  if (!newLabel.trim()) setNewLabel(preset.label);
-                }}
-                className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 transition-colors hover:border-brand hover:text-ink"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid gap-2.5 sm:grid-cols-12">
-          <label className="flex flex-col gap-1 text-xs font-semibold sm:col-span-4">
-            <span>اسم الاختصار / الميزة</span>
-            <input
-              type="text"
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              placeholder="مثال: فتح الإعدادات"
-              className="h-10 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-brand focus:outline-none"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 text-xs font-semibold sm:col-span-4">
-            <span>مسار الصفحة أو الإجراء</span>
-            <input
-              type="text"
-              dir="ltr"
-              value={newTarget}
-              onChange={(e) => setNewTarget(e.target.value)}
-              placeholder="/settings"
-              className="h-10 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-brand focus:outline-none"
-            />
-          </label>
-
-          <div className="flex flex-col gap-1 text-xs font-semibold sm:col-span-2">
-            <span>المفتاح</span>
-            {capturingNewKey ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="h-10"
-                onClick={() => setCapturingNewKey(false)}
-              >
-                {t("config:keys.press")}
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-10 justify-between px-3"
-                onClick={() => {
-                  setTaken(null);
-                  setCapturing(null);
-                  setCapturingCustomId(null);
-                  setCapturingNewKey(true);
-                }}
-              >
-                <kbd dir="ltr" className="font-semibold tabular-nums">
-                  {label(newKey)}
-                </kbd>
-                <Keyboard aria-hidden className="size-3.5" />
-              </Button>
-            )}
-          </div>
-
-          <div className="flex items-end sm:col-span-2">
-            <Button
-              type="button"
-              variant="primary"
-              className="h-10 w-full"
-              onClick={handleAddCustomShortcut}
-            >
-              <Plus aria-hidden className="size-4" />
-              إضافة
-            </Button>
-          </div>
-        </div>
-      </div>
 
       <table className="w-full border-collapse">
         <thead className="text-sm text-ink-2">
@@ -373,7 +331,7 @@ export function KeysSettings() {
                       keys[action] !== current[action] && "border-brand",
                     )}
                   >
-                    {label(keys[action])}
+                    {labelOfKey(keys[action])}
                   </kbd>
                 )}
               </td>
@@ -433,7 +391,7 @@ export function KeysSettings() {
                     dir="ltr"
                     className="rounded-sm border border-brand bg-surface px-2 py-1 font-semibold tabular-nums"
                   >
-                    {label(item.key)}
+                    {labelOfKey(item.key)}
                   </kbd>
                 )}
               </td>
@@ -479,9 +437,92 @@ export function KeysSettings() {
         </tbody>
       </table>
 
+      {/* Bottom section: add a custom shortcut from a list or by typing any screen/action name directly */}
+      <div className="mt-2 rounded-xl border border-line bg-surface-2/60 p-3.5">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-ink">إضافة اختصار / هوت كي جديد</h3>
+          <span className="text-xs text-ink-2">اختر من القائمة أو اكتب اسم الشاشة/الزرار مباشرة</span>
+        </div>
+
+        <div className="grid gap-2.5 sm:grid-cols-12">
+          <label className="flex flex-col gap-1 text-xs font-semibold sm:col-span-3">
+            <span>اختيار سريع (اختياري)</span>
+            <select
+              value={selectedPreset}
+              onChange={(e) => handlePresetChange(e.target.value)}
+              className="h-10 rounded-lg border border-line bg-surface px-2.5 text-sm text-ink focus:border-brand focus:outline-none"
+            >
+              <option value="manual">كتابة يدوية حرة...</option>
+              {COMMON_PAGE_TARGETS.map((preset) => (
+                <option key={preset.target} value={preset.target}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-xs font-semibold sm:col-span-4">
+            <span>اسم الشاشة أو الزرار أو الإجراء</span>
+            <input
+              type="text"
+              value={newTarget}
+              onChange={(e) => {
+                setNewTarget(e.target.value);
+                if (!newLabel.trim()) setNewLabel(e.target.value);
+              }}
+              placeholder="اكتب اسم الشاشة أو الزرار كما يظهر..."
+              className="h-10 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-brand focus:outline-none"
+            />
+          </label>
+
+          <div className="flex flex-col gap-1 text-xs font-semibold sm:col-span-3">
+            <span>مفتاح الاختصار (الهوت كي)</span>
+            {capturingNewKey ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10"
+                onClick={() => setCapturingNewKey(false)}
+              >
+                {t("config:keys.press")}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 justify-between px-3"
+                onClick={() => {
+                  setTaken(null);
+                  setCapturing(null);
+                  setCapturingCustomId(null);
+                  setCapturingNewKey(true);
+                }}
+              >
+                <kbd dir="ltr" className="font-semibold tabular-nums">
+                  {labelOfKey(newKey)}
+                </kbd>
+                <Keyboard aria-hidden className="size-3.5" />
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-end sm:col-span-2">
+            <Button
+              type="button"
+              variant="primary"
+              className="h-10 w-full"
+              onClick={handleAddCustomShortcut}
+            >
+              <Plus aria-hidden className="size-4" />
+              إضافة وحفظ
+            </Button>
+          </div>
+        </div>
+      </div>
+
       {taken ? (
         <p role="alert" className="rounded-control bg-danger-soft p-3 text-danger">
-          {t("config:keys.taken", { key: label(taken.key), action: taken.name })}
+          {t("config:keys.taken", { key: labelOfKey(taken.key), action: taken.name })}
         </p>
       ) : null}
 
