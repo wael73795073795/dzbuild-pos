@@ -25,6 +25,10 @@ const ACTION_TEXT: Record<TillAction, string> = {
   gift_voucher: "giftVoucher",
   serial: "serial",
   department_keys: "departments",
+  quick_price: "quickPrice",
+  quick_weight: "quickWeight",
+  calculator: "calculator",
+  toggle_rail: "toggleRail",
 };
 
 /** The keys no one moves: the scale panel and the cart's own keys. */
@@ -60,7 +64,10 @@ export function HelpDialog({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const rows = [
-    ...actions.map((action) => ({ key: keyLabel(keys[action], t), text: ACTION_TEXT[action] })),
+    ...actions.map((action) => ({
+      key: keyLabel(keys[action] ?? DEFAULT_KEYS[action], t),
+      text: ACTION_TEXT[action] ?? action,
+    })),
     ...FIXED.map((key) => ({ key: t(`common:keys.${key}`), text: key })),
   ];
   return (
@@ -90,7 +97,7 @@ export function HelpDialog({
                   {row.key}
                 </kbd>
               </td>
-              <td>{t(`pos:help.keys.${row.text}`)}</td>
+              <td>{t(`pos:help.keys.${row.text}`, { defaultValue: row.text })}</td>
             </tr>
           ))}
         </tbody>
