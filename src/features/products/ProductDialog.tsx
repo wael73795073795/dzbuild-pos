@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Eraser, History, Trash2 } from "lucide-react";
 import { Suspense, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
@@ -54,6 +55,27 @@ import { VariantsDialog, VariantsPanel } from "./VariantsDialog";
 
 type Tab = "product" | "stock" | "extras" | "breaks" | "variants" | "jewel" | "medicine" | "grid";
 
+const POS_AVAILABILITY_STORAGE_KEY = "dzpos.products.pos_availability.v1";
+
+function syncPosAvailabilityLocal(productId: string, availableAtTill: boolean): void {
+  if (!productId) return;
+  try {
+    const raw = window.localStorage?.getItem(POS_AVAILABILITY_STORAGE_KEY);
+    const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const next: Record<string, boolean> = {};
+    if (current && typeof current === "object") {
+      for (const [k, v] of Object.entries(current)) {
+        if (typeof v === "boolean") next[k] = v;
+      }
+    }
+    next[productId] = availableAtTill;
+    window.localStorage?.setItem(POS_AVAILABILITY_STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new CustomEvent("dzpos:pos-availability-updated", { detail: next }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 /** Loads the lists the form needs first, so its default unit and VAT rate are real ones. */
 export function ProductDialog({
   product,
@@ -102,6 +124,7 @@ function ProductEditor({
   const { t } = useTranslation();
   const lang = useLang();
   const errorText = useErrorText();
+  const queryClient = useQueryClient();
   const create = useCreateProduct();
   const update = useUpdateProduct();
   const archive = useArchiveProduct();
@@ -156,13 +179,27 @@ function ProductEditor({
         {
           // the scale settings need the PLU this save stored
           onSuccess: () => {
+            syncPosAvailabilityLocal(product.id, Boolean(values.availableAtTill));
             if (scale !== null && input.plu !== null) {
               setScale.mutate({ productId: product.id, input: scaleInput(scale) }, { onSuccess: onClose });
             } else onClose();
           },
         },
       );
-    } else create.mutate(input, { onSuccess: onClose });
+    } else {
+      create.mutate(input, {
+        onSuccess: (created) => {
+          const createdId =
+            created && typeof created === "object" && "id" in created && typeof created.id === "string"
+              ? created.id
+              : "";
+          if (createdId) {
+            syncPosAvailabilityLocal(createdId, Boolean(values.availableAtTill));
+          }
+          onClose();
+        },
+      });
+    }
   });
   const title = product ? localizedName(product, lang) : t("products:dialog.new");
 
@@ -233,15 +270,30 @@ function ProductEditor({
     if (!confirmed) return;
     deleteCurrent.mutate(product.id, {
       onSuccess: () => {
+        queryClient.setQueriesData({ queryKey: ["products"] }, (oldData: unknown) => {
+          if (!oldData) return oldData;
+          if (Array.isArray(oldData)) {
+            return oldData.filter((item) => (item as { id?: string })?.id !== product.id);
+          }
+          if (typeof oldData === "object" && "pages" in oldData && Array.isArray((oldData as { pages?: unknown[] }).pages)) {
+            const paged = oldData as { pages: unknown[]; pageParams?: unknown[] };
+            return {
+              ...paged,
+              pages: paged.pages.map((page) =>
+                Array.isArray(page)
+                  ? page.filter((item) => (item as { id?: string })?.id !== product.id)
+                  : page,
+              ),
+            };
+          }
+          return oldData;
+        });
         toast.success(`تم حذف الصنف "${title}"`);
         onClose();
       },
     });
   };
 
-  // M8: the medicine's tab while the pharmacy module is on, a variant model's stock grid while the
-  // variant grid is, and a piece of jewellery (VRT-140: stocked one by one, a simple product or a
-  // variant) while the jewellery module is
   const modules = usePackState().data?.modules ?? [];
   const jewellery = modules.includes("jewellery");
   const tabs: Tab[] =
@@ -267,7 +319,6 @@ function ProductEditor({
         : k === "grid"
           ? t("products:variantGrid.tab")
           : t(`products:dialog.tabs.${k}`);
-  // a refusal naming a scale field shows under that field
   const scaleField = SCALE_FIELDS.some((f) => f === toAppError(setScale.error).field);
   const error =
     create.error ??
@@ -487,9 +538,6 @@ function ProductEditor({
                   <Controller
                     name={`levelPrices.${level.id}`}
                     control={control}
-                    // A level without a price of its own starts empty (not undefined): the
-                    // schema reads every level field as text, and an empty one sells at the
-                    // default price.
                     defaultValue=""
                     render={({ field }) => (
                       <NumericInput
@@ -569,7 +617,6 @@ function ProductEditor({
             </fieldset>
           </form>
         )}
-        {/* M8 wholesale: the minimum order and "Créer un pack", while the module is on */}
         {product && tab === "product" ? <ProductWholesale product={product} session={session} /> : null}
         {error ? (
           <div
