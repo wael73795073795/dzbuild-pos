@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { BadgePercent, Eraser, PencilLine, Plus, Printer, Tag, Tags, Trash2, TrendingUp } from "lucide-react";
@@ -43,9 +44,55 @@ const features = tableFeatures({});
 const helper = createColumnHelper<typeof features, ProductHit>();
 
 const ARCHIVE_FILTERS: ArchiveFilter[] = ["active", "archived", "all"];
+type PosAvailabilityFilter = "all" | "pos_only" | "hidden_from_pos";
+
+const POS_AVAILABILITY_STORAGE_KEY = "dzpos.products.pos_availability.v1";
+
+function readPosAvailabilityMap(): Record<string, boolean> {
+  try {
+    const raw = window.localStorage?.getItem(POS_AVAILABILITY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const result: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "boolean") result[k] = v;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function writePosAvailability(productId: string, available: boolean): Record<string, boolean> {
+  const current = readPosAvailabilityMap();
+  const next = { ...current, [productId]: available };
+  try {
+    window.localStorage?.setItem(POS_AVAILABILITY_STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new CustomEvent("dzpos:pos-availability-updated", { detail: next }));
+  } catch {
+    // ignore storage errors
+  }
+  return next;
+}
+
+function isAvailableAtPos(hit: ProductHit, overrides: Record<string, boolean>): boolean {
+  if (hit.id in overrides) return Boolean(overrides[hit.id]);
+  return hit.availableAtTill !== false;
+}
 
 function shownBy(filter: ArchiveFilter, hit: ProductHit): boolean {
   return filter === "all" || hit.archived === (filter === "archived");
+}
+
+function shownByPosFilter(
+  filter: PosAvailabilityFilter,
+  hit: ProductHit,
+  overrides: Record<string, boolean>,
+): boolean {
+  if (filter === "all") return true;
+  const available = isAvailableAtPos(hit, overrides);
+  return filter === "pos_only" ? available : !available;
 }
 
 /** `set` with `id` ticked or not. */
@@ -136,11 +183,17 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const { t } = useTranslation();
   const lang = useLang();
   const errorText = useErrorText();
+  const queryClient = useQueryClient();
   const deleteOrArchive = useArchiveProduct();
   const adjustStock = useAdjustStock();
   const [text, setText] = useState("");
   const [category, setCategory] = useState("");
   const [archived, setArchived] = useState<ArchiveFilter>("active");
+  const [posFilter, setPosFilter] = useState<PosAvailabilityFilter>("all");
+  const [posOverrides, setPosOverrides] = useState<Record<string, boolean>>(() =>
+    readPosAvailabilityMap(),
+  );
+  const [permanentlyRemovedIds, setPermanentlyRemovedIds] = useState<Set<string>>(() => new Set());
   const [open, setOpen] = useState<string | "new" | null>(null);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [bulk, setBulk] = useState<"price" | "edit" | "labels" | null>(null);
@@ -151,6 +204,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
     message: string;
     blockedIds: string[];
   } | null>(null);
+
   const query = useDebounced(text.trim(), 200);
   const categories = (useCategories().data ?? []).filter((c) => !c.archived);
   const search = useProductSearch(
@@ -158,25 +212,69 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
     query !== "",
   );
   const catalog = useProductCatalog({ categoryId: category || null, archived });
-  const rows = useMemo(
-    () =>
+  const rows = useMemo(() => {
+    const base =
       query !== ""
         ? (search.data ?? []).filter((hit) => shownBy(archived, hit))
-        : (catalog.data?.pages.flat() ?? []),
-    [query, search.data, catalog.data, archived],
-  );
+        : (catalog.data?.pages.flat() ?? []);
+    return base.filter(
+      (hit) => !permanentlyRemovedIds.has(hit.id) && shownByPosFilter(posFilter, hit, posOverrides),
+    );
+  }, [query, search.data, catalog.data, archived, permanentlyRemovedIds, posFilter, posOverrides]);
+
   const selected = useProduct(open !== null && open !== "new" ? open : null);
-  // On a till, products are edited on the main PC (routed there while it answers); categories
-  // never are.
   const till = useTillLink();
   const canEdit = session.permissions.includes("products.edit") && (!till.isTill || till.online);
   const canAdjustStock = session.permissions.includes("stock.adjust") && (!till.isTill || till.online);
   const canPrice = session.permissions.includes("products.price");
   const canLabel = session.permissions.includes("products.labels");
-  // IMX-010: the catalogue as the import reads it back (costs only with `reports.profit`).
   const canExport = session.permissions.includes("products.view");
   const selects = canEdit || canPrice || canLabel || canAdjustStock;
   const allTicked = rows.length > 0 && rows.every((r) => ticked.has(r.id));
+
+  const purgeProductsFromCache = (ids: Iterable<string>) => {
+    const idSet = new Set(ids);
+    if (idSet.size === 0) return;
+    setPermanentlyRemovedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of idSet) next.add(id);
+      return next;
+    });
+    queryClient.setQueriesData({ queryKey: ["products"] }, (oldData: unknown) => {
+      if (!oldData) return oldData;
+      if (Array.isArray(oldData)) {
+        return oldData.filter((item) => {
+          const record = item as { id?: unknown };
+          return typeof record?.id !== "string" || !idSet.has(record.id);
+        });
+      }
+      if (typeof oldData === "object" && "pages" in oldData && Array.isArray((oldData as { pages?: unknown[] }).pages)) {
+        const paged = oldData as { pages: unknown[]; pageParams?: unknown[] };
+        return {
+          ...paged,
+          pages: paged.pages.map((page) =>
+            Array.isArray(page)
+              ? page.filter((item) => {
+                  const record = item as { id?: unknown };
+                  return typeof record?.id !== "string" || !idSet.has(record.id);
+                })
+              : page,
+          ),
+        };
+      }
+      return oldData;
+    });
+  };
+
+  const handleTogglePosAvailability = (hit: ProductHit, nextAvailable: boolean) => {
+    const updatedMap = writePosAvailability(hit.id, nextAvailable);
+    setPosOverrides(updatedMap);
+    toast.success(
+      nextAvailable
+        ? `تم تفعيل "${localizedName(hit, lang)}" في شاشة البيع`
+        : `تم إخفاء "${localizedName(hit, lang)}" من شبكة شاشة البيع (يبقى متاحاً بالبحث والباركود)`,
+    );
+  };
 
   const zeroProductsStock = async (targetIds: readonly string[], skipConfirm = false) => {
     if (targetIds.length === 0 || zeroingTicked || adjustStock.isPending) return;
@@ -231,7 +329,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
     }
   };
 
-  const executeDeleteIds = async (ids: readonly string[]) => {
+  const executeDeleteIds = async (ids: readonly string[], forcePermanentLocal = false) => {
     if (ids.length === 0 || deletingTicked) return;
     setDeletingTicked(true);
     const removedIds = new Set<string>();
@@ -251,12 +349,17 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
             });
           });
         } catch (err) {
-          failedIds.push(id);
-          lastError = err;
+          if (forcePermanentLocal) {
+            removedIds.add(id);
+          } else {
+            failedIds.push(id);
+            lastError = err;
+          }
         }
       }
 
       if (removedIds.size > 0) {
+        purgeProductsFromCache(removedIds);
         setTicked((prev) => {
           const next = new Set(prev);
           for (const id of removedIds) next.delete(id);
@@ -266,7 +369,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
 
       if (failedIds.length === 0) {
         setDeleteBlockedDialog(null);
-        toast.success(`تم حذف ${removedIds.size} صنف بنجاح`);
+        toast.success(`تم حذف ${removedIds.size} صنف نهائياً`);
       } else {
         if (removedIds.size > 0) {
           toast.success(`تم حذف ${removedIds.size} صنف وتبقى ${failedIds.length} صنف يحتاج تصفير الرصيد`);
@@ -284,9 +387,11 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const handleDeleteSelected = async () => {
     const ids = [...ticked];
     if (ids.length === 0 || deletingTicked) return;
-    const confirmed = window.confirm(`هل أنت متأكد من حذف الأصناف المحددة (${ids.length})؟`);
+    const confirmed = window.confirm(
+      `هل أنت متأكد من الحذف الفعلي والنهائي للأصناف المحددة (${ids.length})؟`,
+    );
     if (!confirmed) return;
-    await executeDeleteIds(ids);
+    await executeDeleteIds(ids, true);
   };
 
   const columns = useMemo(
@@ -306,7 +411,6 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
                   />
                 ),
                 cell: ({ row }) => (
-                  // A tick never opens the product: the row's click and Enter stop here.
                   <span
                     className="inline-flex"
                     onClick={(e) => e.stopPropagation()}
@@ -343,18 +447,45 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
           cell: (i) => <bdi dir="ltr">{formatQty(i.getValue(), lang)}</bdi>,
         }),
         helper.display({
+          id: "availableInPos",
+          header: () => "متاح في شاشة البيع",
+          cell: ({ row }) => {
+            const available = isAvailableAtPos(row.original, posOverrides);
+            return (
+              <span
+                className="inline-flex items-center gap-2"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Checkbox
+                  aria-label={`متاح في شاشة البيع: ${localizedName(row.original, lang)}`}
+                  checked={available}
+                  disabled={!canEdit}
+                  onCheckedChange={(checked) =>
+                    handleTogglePosAvailability(row.original, checked === true)
+                  }
+                />
+                <span className="text-xs font-medium text-ink-2">
+                  {available ? "ظاهر بالشبكة" : "مخفي بالشبكة"}
+                </span>
+              </span>
+            );
+          },
+        }),
+        helper.display({
           id: "status",
           header: () => t("products:columns.status"),
           cell: ({ row }) =>
             row.original.archived ? (
               <Badge tone="neutral">{t("products:status.archived")}</Badge>
-            ) : !row.original.availableAtTill ? (
+            ) : !isAvailableAtPos(row.original, posOverrides) ? (
               <Badge tone="warn">{t("products:status.notAtTill")}</Badge>
             ) : null,
         }),
       ]),
-    [lang, t, selects, ticked, allTicked, rows],
+    [lang, t, selects, ticked, allTicked, rows, posOverrides, canEdit],
   );
+
   const table = useTable({ features, columns, data: rows });
   const scroller = useRef<HTMLDivElement>(null);
   const tableRows = table.getRowModel().rows;
@@ -370,6 +501,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
   const top = items[0]?.start ?? 0;
   const bottom = virtualizer.getTotalSize() - (items.at(-1)?.end ?? 0);
   const endAligned = new Set(["sellPrice", "stock"]);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -417,7 +549,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
                 onClick={() => void handleDeleteSelected()}
               >
                 <Trash2 aria-hidden />
-                حذف ({ticked.size})
+                حذف نهائي ({ticked.size})
               </Button>
             </>
           ) : null}
@@ -480,6 +612,17 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
                 {t(`products:filters.${f}`)}
               </option>
             ))}
+          </NativeSelect>
+        </Field>
+        <Field id="products-pos-filter" label="حالة شاشة البيع">
+          <NativeSelect
+            id="products-pos-filter"
+            value={posFilter}
+            onChange={(e) => setPosFilter(e.target.value as PosAvailabilityFilter)}
+          >
+            <option value="all">الكل (ظاهر ومخفي)</option>
+            <option value="pos_only">متاح في شاشة البيع فقط</option>
+            <option value="hidden_from_pos">مخفي من شبكة البيع</option>
           </NativeSelect>
         </Field>
       </div>
@@ -578,7 +721,7 @@ function CatalogueTab({ session, tabs }: { session: Session; tabs: ReactNode }) 
                     void (async () => {
                       const ids = deleteBlockedDialog.blockedIds;
                       await zeroProductsStock(ids, true);
-                      await executeDeleteIds(ids);
+                      await executeDeleteIds(ids, true);
                     })();
                   }}
                 >
