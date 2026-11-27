@@ -266,10 +266,10 @@ function ElementPagePickerOverlay({
           <Crosshair aria-hidden className="size-4 text-brand animate-pulse" />
           <span>الملقاط نشط: أشر واضغط على أي عنصر أو اختر الصفحة الحالية</span>
         </div>
-        <Button type="button" variant="primary" size="sm" onClick={pickCurrentPage}>
+        <Button type="button" variant="primary" size="md" onClick={pickCurrentPage}>
           التقاط الصفحة الحالية
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+        <Button type="button" variant="outline" size="md" onClick={onCancel}>
           <X aria-hidden className="size-4" />
           إلغاء (Esc)
         </Button>
@@ -277,6 +277,7 @@ function ElementPagePickerOverlay({
     </div>
   );
 }
+
 export function KeysSettings() {
   const { t } = useTranslation();
   const errorText = useErrorText();
@@ -664,7 +665,7 @@ export function KeysSettings() {
                 ملقاط عنصر / صفحة
               </Button>
               {editingId ? (
-                <Button type="button" variant="ghost" size="sm" onClick={resetComposer}>
+                <Button type="button" variant="ghost" size="md" onClick={resetComposer}>
                   إلغاء التعديل
                 </Button>
               ) : null}
