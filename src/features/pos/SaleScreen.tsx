@@ -2032,6 +2032,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       </div>
     </div>
   );
+
+  const orderedZones: PosZoneId[] = [
+    posLayout.order[0] ?? "receipt",
+    posLayout.order[1] ?? "actions",
+    posLayout.order[2] ?? "products",
+  ];
   const heldCount = held.data?.length ?? 0;
 
   const closed = till.isSuccess && till.data === null;
@@ -2626,11 +2632,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               </div>
             ) : null}
 
-            {([
-              posLayout.order[0] ?? "receipt",
-              posLayout.order[1] ?? "actions",
-              posLayout.order[2] ?? "products",
-            ] as PosZoneId[]).map((zoneId) => renderZoneCard(zoneId))}
+            {orderedZones.map((zoneId) => renderZoneCard(zoneId))}
           </div>
 
           {hiddenZones.length > 0 ? (
