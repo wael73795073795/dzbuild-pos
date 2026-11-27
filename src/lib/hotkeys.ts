@@ -15,12 +15,45 @@ export type Hotkey =
   | "F12"
   | "Escape"
   | `Ctrl+${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-  | `Alt+${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+  | `Alt+${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
+  | (string & {});
 
-function matchesEvent(event: KeyboardEvent, hotkey: Hotkey): boolean {
+function normalizeKeyToken(rawKey: string): string {
+  const lower = rawKey.toLowerCase();
+  if (lower === " ") return "Space";
+  if (lower === "esc") return "Escape";
+  if (/^f([1-9]|1[0-2])$/.test(lower)) return lower.toUpperCase();
+  if (lower.length === 1) return lower.toUpperCase();
+  return rawKey.charAt(0).toUpperCase() + rawKey.slice(1);
+}
+
+export function formatShortcutFromEvent(event: KeyboardEvent): string | null {
+  if (event.metaKey) return null;
+  const ignoreKeys = new Set(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
+  if (ignoreKeys.has(event.key)) return null;
+
+  const digitMatch = /^(?:Digit|Numpad)(\d)$/.exec(event.code);
+  const baseKey =
+    digitMatch && !event.ctrlKey && !event.altKey && !event.shiftKey
+      ? digitMatch[1] ?? event.key
+      : digitMatch && (event.ctrlKey || event.altKey)
+        ? digitMatch[1] ?? event.key
+        : normalizeKeyToken(event.key);
+
+  if (!baseKey) return null;
+
+  const parts: string[] = [];
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  parts.push(baseKey);
+  return parts.join("+");
+}
+
+function matchesEvent(event: KeyboardEvent, hotkey: string): boolean {
   if (event.metaKey) return false;
 
-  if (hotkey.startsWith("Ctrl+")) {
+  if (hotkey.startsWith("Ctrl+") && hotkey.length === 6) {
     const digit = hotkey.slice(5);
     if (!event.ctrlKey || event.altKey || event.shiftKey) return false;
     const pressed = /^\d$/.test(event.key)
@@ -29,7 +62,7 @@ function matchesEvent(event: KeyboardEvent, hotkey: Hotkey): boolean {
     return pressed === digit;
   }
 
-  if (hotkey.startsWith("Alt+")) {
+  if (hotkey.startsWith("Alt+") && hotkey.length === 5) {
     const digit = hotkey.slice(4);
     if (!event.altKey || event.ctrlKey || event.shiftKey) return false;
     const pressed = /^\d$/.test(event.key)
@@ -38,17 +71,26 @@ function matchesEvent(event: KeyboardEvent, hotkey: Hotkey): boolean {
     return pressed === digit;
   }
 
-  if (event.ctrlKey || event.altKey || event.shiftKey) return false;
-
   if (hotkey === "Escape") {
-    return event.key === "Escape";
+    return !event.ctrlKey && !event.altKey && !event.shiftKey && event.key === "Escape";
   }
 
-  return event.key.toUpperCase() === hotkey.toUpperCase();
+  if (/^F([1-9]|1[0-2])$/i.test(hotkey)) {
+    return (
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toUpperCase() === hotkey.toUpperCase()
+    );
+  }
+
+  const captured = formatShortcutFromEvent(event);
+  if (!captured) return false;
+  return captured.toLowerCase() === hotkey.toLowerCase();
 }
 
 export function useHotkeys(
-  bindings: Partial<Record<Hotkey, () => void>>,
+  bindings: Partial<Record<string, () => void>>,
   enabled = true,
 ): void {
   useEffect(() => {
@@ -62,12 +104,11 @@ export function useHotkeys(
         target?.tagName === "SELECT" ||
         target?.isContentEditable;
 
-      // Allow Escape and function keys even if focus is inside an input, except plain typing keys
       const isFunctionOrEsc =
         event.key === "Escape" || /^F([1-9]|1[0-2])$/.test(event.key) || event.ctrlKey || event.altKey;
       if (inEditable && !isFunctionOrEsc) return;
 
-      for (const [key, handler] of Object.entries(bindings) as Array<[Hotkey, (() => void) | undefined]>) {
+      for (const [key, handler] of Object.entries(bindings) as Array<[string, (() => void) | undefined]>) {
         if (!handler) continue;
         if (matchesEvent(event, key)) {
           event.preventDefault();
