@@ -179,13 +179,22 @@ function readPosLayout(): PosLayoutConfig {
     if (!raw) return DEFAULT_POS_LAYOUT;
     const parsed = JSON.parse(raw) as Partial<PosLayoutConfig>;
     const validIds: PosZoneId[] = ["receipt", "actions", "products"];
-    const orderList = Array.isArray(parsed.order)
-      ? parsed.order.filter((id): id is PosZoneId => validIds.includes(id as PosZoneId))
-      : [];
+    const orderList: PosZoneId[] = [];
+    if (Array.isArray(parsed.order)) {
+      for (const id of parsed.order) {
+        if (validIds.includes(id as PosZoneId) && !orderList.includes(id as PosZoneId)) {
+          orderList.push(id as PosZoneId);
+        }
+      }
+    }
     for (const id of validIds) {
       if (!orderList.includes(id)) orderList.push(id);
     }
-    const order = orderList.slice(0, 3) as [PosZoneId, PosZoneId, PosZoneId];
+    const order: [PosZoneId, PosZoneId, PosZoneId] = [
+      orderList[0] ?? "receipt",
+      orderList[1] ?? "actions",
+      orderList[2] ?? "products",
+    ];
     const toolbarOrientation: DockOrientation =
       parsed.toolbarOrientation === "horizontal" ? "horizontal" : "vertical";
     const locked = Boolean(parsed.locked);
@@ -631,7 +640,6 @@ function QuickWeightModal({
     </div>
   );
 }
-
 function PosCalculatorModal({
   open,
   onClose,
@@ -896,6 +904,7 @@ function SupermarketCartIcon({
     </svg>
   );
 }
+
 export function SaleScreen({ session, withTables = false }: { session: Session; withTables?: boolean }) {
   const { t } = useTranslation();
   const lang = useLang();
@@ -1152,7 +1161,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     },
     [clampLeftWidth, updatePosLayout],
   );
-
   const startZoneDrag = useCallback(
     (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
       if (posLayout.locked) return;
@@ -2541,7 +2549,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             disabled={posLayout.locked}
             className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand disabled:opacity-40"
           >
-            <Layers aria-hidden className="size-3.5" />
+                        <Layers aria-hidden className="size-3.5" />
             <span>تبديل الإيصال والمنتجات</span>
           </button>
 
