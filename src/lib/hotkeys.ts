@@ -1,45 +1,27 @@
-import { useEffect } from "react";
-
-export type Hotkey =
-  | "F1"
-  | "F2"
-  | "F3"
-  | "F4"
-  | "F5"
-  | "F6"
-  | "F7"
-  | "F8"
-  | "F9"
-  | "F10"
-  | "F11"
-  | "F12"
-  | "Escape"
-  | `Ctrl+${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-  | `Alt+${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-  | (string & {});
-
-function normalizeKeyToken(rawKey: string): string {
+function normalizeKeyToken(rawKey: string, code: string): string {
   const lower = rawKey.toLowerCase();
-  if (lower === " ") return "Space";
-  if (lower === "esc") return "Escape";
+  if (lower === " " || code === "Space") return "Space";
+  if (lower === "esc" || lower === "escape") return "Escape";
   if (/^f([1-9]|1[0-2])$/.test(lower)) return lower.toUpperCase();
-  if (lower.length === 1) return lower.toUpperCase();
+
+  const digitMatch = /^(?:Digit|Numpad)(\d)$/.exec(code);
+  if (digitMatch && digitMatch[1]) {
+    return digitMatch[1];
+  }
+
+  if (rawKey.length === 1) {
+    return rawKey.toUpperCase();
+  }
+
   return rawKey.charAt(0).toUpperCase() + rawKey.slice(1);
 }
 
 export function formatShortcutFromEvent(event: KeyboardEvent): string | null {
   if (event.metaKey) return null;
-  const ignoreKeys = new Set(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
-  if (ignoreKeys.has(event.key)) return null;
+  const modifierOnlyKeys = new Set(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
+  if (modifierOnlyKeys.has(event.key)) return null;
 
-  const digitMatch = /^(?:Digit|Numpad)(\d)$/.exec(event.code);
-  const baseKey =
-    digitMatch && !event.ctrlKey && !event.altKey && !event.shiftKey
-      ? digitMatch[1] ?? event.key
-      : digitMatch && (event.ctrlKey || event.altKey)
-        ? digitMatch[1] ?? event.key
-        : normalizeKeyToken(event.key);
-
+  const baseKey = normalizeKeyToken(event.key, event.code);
   if (!baseKey) return null;
 
   const parts: string[] = [];
@@ -47,101 +29,35 @@ export function formatShortcutFromEvent(event: KeyboardEvent): string | null {
   if (event.altKey) parts.push("Alt");
   if (event.shiftKey) parts.push("Shift");
   parts.push(baseKey);
+
   return parts.join("+");
 }
-
 function matchesEvent(event: KeyboardEvent, hotkey: string): boolean {
   if (event.metaKey) return false;
 
-  if (hotkey.startsWith("Ctrl+") && hotkey.length === 6) {
-    const digit = hotkey.slice(5);
-    if (!event.ctrlKey || event.altKey || event.shiftKey) return false;
-    const pressed = /^\d$/.test(event.key)
-      ? event.key
-      : /^(?:Digit|Numpad)(\d)$/.exec(event.code)?.[1];
-    return pressed === digit;
-  }
-
-  if (hotkey.startsWith("Alt+") && hotkey.length === 5) {
-    const digit = hotkey.slice(4);
-    if (!event.altKey || event.ctrlKey || event.shiftKey) return false;
-    const pressed = /^\d$/.test(event.key)
-      ? event.key
-      : /^(?:Digit|Numpad)(\d)$/.exec(event.code)?.[1];
-    return pressed === digit;
-  }
-
-  if (hotkey === "Escape") {
-    return !event.ctrlKey && !event.altKey && !event.shiftKey && event.key === "Escape";
-  }
-
-  if (/^F([1-9]|1[0-2])$/i.test(hotkey)) {
-    return (
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      event.key.toUpperCase() === hotkey.toUpperCase()
-    );
-  }
+  const cleaned = hotkey.trim();
+  if (!cleaned) return false;
 
   const captured = formatShortcutFromEvent(event);
   if (!captured) return false;
-  return captured.toLowerCase() === hotkey.toLowerCase();
-}
 
-export function useHotkeys(
-  bindings: Partial<Record<string, () => void>>,
-  enabled = true,
-): void {
-  useEffect(() => {
-    if (!enabled) return;
+  if (captured.toLowerCase() === cleaned.toLowerCase()) {
+    return true;
+  }
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const inEditable =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "SELECT" ||
-        target?.isContentEditable;
+  // Fallback for Ctrl/Alt + digit across layouts/numpad
+  if (/^(Ctrl|Alt)\+\d$/i.test(cleaned)) {
+    const [mod, digit] = cleaned.split("+");
+    const wantCtrl = mod?.toLowerCase() === "ctrl";
+    const wantAlt = mod?.toLowerCase() === "alt";
+    if (event.ctrlKey !== wantCtrl || event.altKey !== wantAlt || event.shiftKey) {
+      return false;
+    }
+    const pressedDigit = /^\d$/.test(event.key)
+      ? event.key
+      : /^(?:Digit|Numpad)(\d)$/.exec(event.code)?.[1];
+    return pressedDigit === digit;
+  }
 
-      const isFunctionOrEsc =
-        event.key === "Escape" || /^F([1-9]|1[0-2])$/.test(event.key) || event.ctrlKey || event.altKey;
-      if (inEditable && !isFunctionOrEsc) return;
-
-      for (const [key, handler] of Object.entries(bindings) as Array<[string, (() => void) | undefined]>) {
-        if (!handler) continue;
-        if (matchesEvent(event, key)) {
-          event.preventDefault();
-          event.stopPropagation();
-          handler();
-          return;
-        }
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [bindings, enabled]);
-}
-
-export function useCtrlHotkey(
-  key: string,
-  handler: () => void,
-  enabled = true,
-): void {
-  useEffect(() => {
-    if (!enabled) return;
-
-    const targetKey = key.toLowerCase();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== targetKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      handler();
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [enabled, handler, key]);
+  return false;
 }
