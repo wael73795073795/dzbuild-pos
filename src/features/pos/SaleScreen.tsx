@@ -43,7 +43,7 @@ import { useApproval } from "@/components/manager-approval";
 import { Button } from "@/components/ui/button";
 import { isApprovalCancelled } from "@/lib/approval";
 import { useCurrentSession } from "@/lib/ipc/cash";
-import { useUnits } from "@/lib/ipc/catalog";
+import { useTaxRates, useUnits } from "@/lib/ipc/catalog";
 import { useCompany } from "@/lib/ipc/company";
 import { useSerialScans } from "@/lib/ipc/devices";
 import { useHardwareConfig, useScannerOptions } from "@/lib/ipc/hardware";
@@ -57,7 +57,7 @@ import { formatAmountInput, formatDZD } from "@/lib/format";
 import { type Hotkey, useCtrlHotkey, useHotkeys } from "@/lib/hotkeys";
 import { DEFAULT_KEYS, type TillAction, ariaKey, keyLabel, useKeyMap } from "@/lib/key-map";
 import { localizedName } from "@/lib/names";
-import { formatQty } from "@/lib/numeric";
+import { formatQty, parseAmount } from "@/lib/numeric";
 import { useScanner } from "@/lib/scanner";
 import { BackupAlerts } from "@/app/BackupAlerts";
 import { DemoRibbon } from "@/app/DemoRibbon";
@@ -261,7 +261,7 @@ function QuickPriceModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmitPrice: (params: { price: number; customName?: string }) => Promise<void>;
+  onSubmitPrice: (params: { unitPrice: number; customName?: string }) => Promise<void>;
 }) {
   const [priceInput, setPriceInput] = useState("");
   const [nameInput, setNameInput] = useState("");
@@ -294,8 +294,8 @@ function QuickPriceModal({
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    const parsed = Number(priceInput.replace(",", "."));
-    if (!Number.isFinite(parsed) || parsed <= 0) {
+    const unitPrice = parseAmount(priceInput);
+    if (unitPrice === null || unitPrice <= 0) {
       toast.error("أدخل سعراً صحيحاً أكبر من صفر");
       priceRef.current?.focus();
       return;
@@ -304,8 +304,8 @@ function QuickPriceModal({
     try {
       const trimmed = nameInput.trim();
       await onSubmitPrice({
-        price: parsed,
-        customName: trimmed.length > 0 ? trimmed : DEFAULT_NO_BARCODE_NAME,
+        unitPrice,
+        customName: trimmed.length > 0 ? trimmed : undefined,
       });
       onClose();
     } finally {
@@ -801,6 +801,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const approval = useApproval();
   const preview = useCartPreview();
   const units = useUnits().data;
+  const taxRates = useTaxRates().data ?? [];
+  const defaultTaxRateId =
+    taxRates.find((r) => r.active)?.id ?? taxRates[0]?.id ?? null;
   const tillPayment = useTillPayment();
   const finishSale = useFinishSale(approval.run);
   const previewSale = usePreviewSale().mutateAsync;
@@ -892,7 +895,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     });
   }, []);
 
-  // Split container is forced to LTR so CartPanel stays on the left and ProductGrid/ScanField stays on the right
   const handleDividerPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
       if (splitPinned) {
@@ -1020,18 +1022,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [askSerials, lang, modules, notify, t],
   );
 
-  // Quick price / manual item: exact price * 1 qty (no x10 multiplier) and non-empty name/description
+  // Quick price / manual item: uses parseAmount (no x10 multiplier) and attaches defaultTaxRateId
   const handleQuickPriceSubmit = useCallback(
-    async ({ price, customName }: { price: number; customName?: string }) => {
-      const normalizedPrice = Number(price);
-      if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) {
-        toast.error("أدخل سعراً صحيحاً أكبر من صفر");
-        return;
-      }
-      const scaledPrice = Math.round(normalizedPrice * 1_000);
-      const finalName = (customName ?? "").trim() || DEFAULT_NO_BARCODE_NAME;
+    async ({ unitPrice, customName }: { unitPrice: number; customName?: string }) => {
+      const trimmedName = (customName ?? "").trim();
+      const finalName = trimmedName || DEFAULT_NO_BARCODE_NAME;
 
-      if (!customName || customName.trim().length === 0) {
+      if (!trimmedName) {
         try {
           const hit = await findByCode.mutateAsync(NO_BARCODE_LOOKUP_CODE);
           if (hit) {
@@ -1041,17 +1038,17 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                 productId: hit.product.id,
                 description: hitName,
                 qty: 1_000,
-                unitPrice: scaledPrice,
+                unitPrice,
                 discount: { kind: "none" },
-                taxRateId: null,
+                taxRateId: defaultTaxRateId,
                 note: null,
-                expectedUnitPrice: scaledPrice,
+                expectedUnitPrice: unitPrice,
               },
               {
                 name: hitName,
                 unitCode: hit.product.unitCode || "PCS",
                 unitDecimals: unitDecimalsOf(hit.product, units),
-                price: scaledPrice,
+                price: unitPrice,
                 latinName: hit.product.nameFr.trim() || hit.product.nameEn.trim() || hitName,
               },
             );
@@ -1060,7 +1057,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             return;
           }
         } catch {
-          // Fallback to local open/quick line when lookup is absent
+          // Fallback to open item line
         }
       }
 
@@ -1069,24 +1066,24 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           productId: null,
           description: finalName,
           qty: 1_000,
-          unitPrice: scaledPrice,
+          unitPrice,
           discount: { kind: "none" },
-          taxRateId: null,
+          taxRateId: defaultTaxRateId,
           note: null,
-          expectedUnitPrice: scaledPrice,
+          expectedUnitPrice: null,
         },
         {
           name: finalName,
           unitCode: "PCS",
           unitDecimals: 0,
-          price: scaledPrice,
+          price: unitPrice,
           latinName: finalName,
         },
       );
       beep("ok");
       setNotice(null);
     },
-    [findByCode, lang, units],
+    [defaultTaxRateId, findByCode, lang, units],
   );
 
   const handleQuickWeightSubmit = useCallback(
