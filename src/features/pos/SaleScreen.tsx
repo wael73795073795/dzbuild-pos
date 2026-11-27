@@ -1105,6 +1105,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [updatePosLayout],
   );
 
+  const clampLeftWidth = useCallback((desired: number): number => {
+    const containerWidth = splitContainerRef.current?.clientWidth ?? window.innerWidth;
+    const maxAllowedByViewport = Math.max(MIN_LEFT_WIDTH, containerWidth - MIN_RIGHT_WIDTH);
+    const upper = Math.min(MAX_LEFT_WIDTH, maxAllowedByViewport);
+    return Math.max(MIN_LEFT_WIDTH, Math.min(upper, desired));
+  }, []);
+
   const applyPreset = useCallback(
     (preset: PosPresetId) => {
       updatePosLayout((prev) => {
@@ -1264,13 +1271,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [idleRoaming, setIdleRoaming] = useState(false);
   const [roamPercent, setRoamPercent] = useState(0);
   const [justAddedPulse, setJustAddedPulse] = useState(false);
-
-  const clampLeftWidth = useCallback((desired: number): number => {
-    const containerWidth = splitContainerRef.current?.clientWidth ?? window.innerWidth;
-    const maxAllowedByViewport = Math.max(MIN_LEFT_WIDTH, containerWidth - MIN_RIGHT_WIDTH);
-    const upper = Math.min(MAX_LEFT_WIDTH, maxAllowedByViewport);
-    return Math.max(MIN_LEFT_WIDTH, Math.min(upper, desired));
-  }, []);
 
   useEffect(() => {
     const onResize = () => {
@@ -2028,6 +2028,30 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   );
   const heldCount = held.data?.length ?? 0;
 
+  const closed = till.isSuccess && till.data === null;
+  const closedView = (
+    <div className="grid flex-1 place-items-center p-6">
+      <EmptyState
+        icon={Lock}
+        title={t("pos:closed.title")}
+        body={t("pos:closed.body")}
+        action={
+          <div className="flex gap-2">
+            {can("cash.open") ? (
+              <Button variant="primary" size="lg" onClick={() => setDialog({ kind: "openSession" })}>
+                <Wallet aria-hidden />
+                {t("pos:closed.open")}
+              </Button>
+            ) : null}
+            <Button variant="outline" size="lg" onClick={() => void navigate(backOfficeHome(session))}>
+              {t("pos:closed.back")}
+            </Button>
+          </div>
+        }
+      />
+    </div>
+  );
+
   const zoneMeta: Record<PosZoneId, { title: string; badge: string }> = useMemo(
     () => ({
       receipt: {
@@ -2480,7 +2504,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         </Suspense>
       ) : null}
 
-      {/* Top quick layout & preset bar inside the gray/dark POS theme */}
       <div
         dir="rtl"
         className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface-2/80 px-3 py-1.5 text-xs"
@@ -2600,7 +2623,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             {posLayout.order.map((zoneId) => renderZoneCard(zoneId))}
           </div>
 
-          {/* Minimized zones docked as icons/pills inside the same POS screen while background stays active */}
           {hiddenZones.length > 0 ? (
             <div
               dir="rtl"
