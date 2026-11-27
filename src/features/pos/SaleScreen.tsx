@@ -2168,7 +2168,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     );
   };
 
-  const renderZoneCard = (zoneId: PosZoneId) => {
+  const renderZoneCard = (zoneId: PosZoneId = "receipt") => {
     const safeId: PosZoneId = zoneId ?? "receipt";
     const z = posLayout.zones[safeId];
     if (z.hidden) return null;
@@ -2646,7 +2646,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               </div>
             ) : null}
 
-            {orderedZones.map((zoneId) => renderZoneCard(zoneId))}
+            {orderedZones.map((zoneId) => renderZoneCard(zoneId ?? "receipt"))}
           </div>
 
           {hiddenZones.length > 0 ? (
