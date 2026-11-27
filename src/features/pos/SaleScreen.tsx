@@ -9,13 +9,17 @@ import {
   Delete,
   Equal,
   KeyRound,
+  Layers,
   Loader2,
   Lock,
   Menu,
+  Minimize2,
+  Move,
   Pause,
   Percent,
   Pin,
   PinOff,
+  RotateCcw,
   Scale,
   ShieldCheck,
   Tag,
@@ -31,6 +35,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -91,6 +96,27 @@ interface Notice {
   text: string;
 }
 
+type PosZoneId = "receipt" | "actions" | "products";
+type DockOrientation = "vertical" | "horizontal";
+type PosPresetId = "default" | "receipt_focus" | "products_focus";
+
+interface PosZoneState {
+  docked: boolean;
+  compact: boolean;
+  hidden: boolean;
+  offsetX: number;
+  offsetY: number;
+  width: number | null;
+  height: number | null;
+}
+
+interface PosLayoutConfig {
+  order: [PosZoneId, PosZoneId, PosZoneId];
+  toolbarOrientation: DockOrientation;
+  locked: boolean;
+  zones: Record<PosZoneId, PosZoneState>;
+}
+
 const CHECKOUT_MODULES: Module[] = ["serials", "pharmacy", "jewellery"];
 const VOUCHER_MODULES: Module[] = ["gift_vouchers", "loyalty", "orders", "repairs"];
 
@@ -98,18 +124,108 @@ const DEPARTMENTS_KEY = "dzpos.till.departments";
 const SPLIT_WIDTH_KEY = "dzpos.till.splitWidth";
 const SPLIT_PINNED_KEY = "dzpos.till.splitPinned";
 const RAIL_COLLAPSED_KEY = "dzpos.till.railCollapsed";
+const POS_LAYOUT_KEY = "dzpos.till.layout.v2";
 
 const DEFAULT_NO_BARCODE_NAME = "صنف بدون باركود";
 const NO_BARCODE_LOOKUP_CODE = "0000000000000";
 
 const DEFAULT_LEFT_WIDTH = 520;
-const MIN_LEFT_WIDTH = 340;
-const MAX_LEFT_WIDTH = 780;
-const MIN_RIGHT_WIDTH = 420;
+const MIN_LEFT_WIDTH = 300;
+const MAX_LEFT_WIDTH = 860;
+const MIN_RIGHT_WIDTH = 340;
 
 const CART_TRACK_CAPACITY = 20;
 const PAUSE_WAIT_THRESHOLD_MS = 12_000;
 const IDLE_ROAM_THRESHOLD_MS = 20_000;
+
+const DEFAULT_POS_LAYOUT: PosLayoutConfig = {
+  order: ["receipt", "actions", "products"],
+  toolbarOrientation: "vertical",
+  locked: false,
+  zones: {
+    receipt: {
+      docked: false,
+      compact: false,
+      hidden: false,
+      offsetX: 0,
+      offsetY: 0,
+      width: null,
+      height: null,
+    },
+    actions: {
+      docked: false,
+      compact: false,
+      hidden: false,
+      offsetX: 0,
+      offsetY: 0,
+      width: null,
+      height: null,
+    },
+    products: {
+      docked: false,
+      compact: false,
+      hidden: false,
+      offsetX: 0,
+      offsetY: 0,
+      width: null,
+      height: null,
+    },
+  },
+};
+
+function readPosLayout(): PosLayoutConfig {
+  try {
+    const raw = window.localStorage.getItem(POS_LAYOUT_KEY);
+    if (!raw) return DEFAULT_POS_LAYOUT;
+    const parsed = JSON.parse(raw) as Partial<PosLayoutConfig>;
+    const validIds: PosZoneId[] = ["receipt", "actions", "products"];
+    const orderList = Array.isArray(parsed.order)
+      ? parsed.order.filter((id): id is PosZoneId => validIds.includes(id as PosZoneId))
+      : [];
+    for (const id of validIds) {
+      if (!orderList.includes(id)) orderList.push(id);
+    }
+    const order = orderList.slice(0, 3) as [PosZoneId, PosZoneId, PosZoneId];
+    const toolbarOrientation: DockOrientation =
+      parsed.toolbarOrientation === "horizontal" ? "horizontal" : "vertical";
+    const locked = Boolean(parsed.locked);
+
+    const mergeZone = (id: PosZoneId): PosZoneState => {
+      const z = parsed.zones?.[id];
+      return {
+        docked: Boolean(z?.docked),
+        compact: Boolean(z?.compact),
+        hidden: Boolean(z?.hidden),
+        offsetX: typeof z?.offsetX === "number" && Number.isFinite(z.offsetX) ? z.offsetX : 0,
+        offsetY: typeof z?.offsetY === "number" && Number.isFinite(z.offsetY) ? z.offsetY : 0,
+        width: typeof z?.width === "number" && Number.isFinite(z.width) && z.width > 80 ? z.width : null,
+        height:
+          typeof z?.height === "number" && Number.isFinite(z.height) && z.height > 48 ? z.height : null,
+      };
+    };
+
+    return {
+      order,
+      toolbarOrientation,
+      locked,
+      zones: {
+        receipt: mergeZone("receipt"),
+        actions: mergeZone("actions"),
+        products: mergeZone("products"),
+      },
+    };
+  } catch {
+    return DEFAULT_POS_LAYOUT;
+  }
+}
+
+function savePosLayout(layout: PosLayoutConfig): void {
+  try {
+    window.localStorage.setItem(POS_LAYOUT_KEY, JSON.stringify(layout));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function rememberedDepartments(): boolean {
   try {
@@ -831,6 +947,291 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [railCollapsed, setRailCollapsed] = useState<boolean>(rememberedRailCollapsed);
   const [draggingSplit, setDraggingSplit] = useState(false);
 
+  const [posLayout, setPosLayout] = useState<PosLayoutConfig>(() => {
+    const loaded = readPosLayout();
+    return {
+      ...loaded,
+      zones: {
+        ...loaded.zones,
+        actions: {
+          ...loaded.zones.actions,
+          compact: loaded.zones.actions.compact || rememberedRailCollapsed(),
+        },
+      },
+    };
+  });
+  const [activeDragZone, setActiveDragZone] = useState<PosZoneId | null>(null);
+
+  const updatePosLayout = useCallback((updater: (prev: PosLayoutConfig) => PosLayoutConfig) => {
+    setPosLayout((prev) => {
+      const next = updater(prev);
+      savePosLayout(next);
+      return next;
+    });
+  }, []);
+
+  const toggleLayoutLock = useCallback(() => {
+    updatePosLayout((prev) => ({ ...prev, locked: !prev.locked }));
+  }, [updatePosLayout]);
+
+  const toggleToolbarOrientation = useCallback(() => {
+    updatePosLayout((prev) => {
+      if (prev.locked) {
+        toast.info("التخطيط مقفل — فك القفل أولاً لتغيير اتجاه شريط الأزرار");
+        return prev;
+      }
+      const nextOrientation: DockOrientation =
+        prev.toolbarOrientation === "vertical" ? "horizontal" : "vertical";
+      return {
+        ...prev,
+        toolbarOrientation: nextOrientation,
+        zones: {
+          ...prev.zones,
+          actions: {
+            ...prev.zones.actions,
+            height: nextOrientation === "horizontal" ? 76 : null,
+            width: nextOrientation === "horizontal" ? null : prev.zones.actions.width,
+          },
+        },
+      };
+    });
+  }, [updatePosLayout]);
+
+  const swapZones = useCallback(
+    (first: PosZoneId, second: PosZoneId) => {
+      if (first === second) return;
+      updatePosLayout((prev) => {
+        if (prev.locked) {
+          toast.info("التخطيط مقفل — فك القفل أولاً لتبديل الأجزاء");
+          return prev;
+        }
+        const nextOrder = [...prev.order] as [PosZoneId, PosZoneId, PosZoneId];
+        const idxA = nextOrder.indexOf(first);
+        const idxB = nextOrder.indexOf(second);
+        if (idxA !== -1 && idxB !== -1) {
+          nextOrder[idxA] = second;
+          nextOrder[idxB] = first;
+        }
+        return {
+          ...prev,
+          order: nextOrder,
+        };
+      });
+    },
+    [updatePosLayout],
+  );
+
+  const cycleZonePosition = useCallback(
+    (zoneId: PosZoneId) => {
+      updatePosLayout((prev) => {
+        if (prev.locked) {
+          toast.info("التخطيط مقفل — فك القفل أولاً لتحريك الأجزاء");
+          return prev;
+        }
+        const idx = prev.order.indexOf(zoneId);
+        if (idx === -1) return prev;
+        const nextIdx = (idx + 1) % prev.order.length;
+        const nextOrder = [...prev.order] as [PosZoneId, PosZoneId, PosZoneId];
+        const [moved] = nextOrder.splice(idx, 1);
+        nextOrder.splice(nextIdx, 0, moved);
+        return {
+          ...prev,
+          order: nextOrder,
+        };
+      });
+    },
+    [updatePosLayout],
+  );
+
+  const toggleZoneCompact = useCallback(
+    (zoneId: PosZoneId) => {
+      updatePosLayout((prev) => {
+        const currentZone = prev.zones[zoneId];
+        const nextCompact = !currentZone.compact;
+        if (zoneId === "actions") {
+          setRailCollapsed(nextCompact);
+          rememberRailCollapsed(nextCompact);
+        }
+        return {
+          ...prev,
+          zones: {
+            ...prev.zones,
+            [zoneId]: {
+              ...currentZone,
+              compact: nextCompact,
+              hidden: false,
+            },
+          },
+        };
+      });
+    },
+    [updatePosLayout],
+  );
+
+  const minimizeZoneToIcon = useCallback(
+    (zoneId: PosZoneId) => {
+      updatePosLayout((prev) => ({
+        ...prev,
+        zones: {
+          ...prev.zones,
+          [zoneId]: {
+            ...prev.zones[zoneId],
+            hidden: true,
+          },
+        },
+      }));
+    },
+    [updatePosLayout],
+  );
+
+  const restoreZone = useCallback(
+    (zoneId: PosZoneId) => {
+      updatePosLayout((prev) => ({
+        ...prev,
+        zones: {
+          ...prev.zones,
+          [zoneId]: {
+            ...prev.zones[zoneId],
+            hidden: false,
+            compact: false,
+            offsetX: 0,
+            offsetY: 0,
+            width: null,
+            height: null,
+          },
+        },
+      }));
+    },
+    [updatePosLayout],
+  );
+
+  const applyPreset = useCallback(
+    (preset: PosPresetId) => {
+      updatePosLayout((prev) => {
+        if (prev.locked) {
+          toast.info("التخطيط مقفل — فك القفل أولاً لاختيار قالب");
+          return prev;
+        }
+        if (preset === "receipt_focus") {
+          setLeftWidth(clampLeftWidth(660));
+          return {
+            ...prev,
+            order: ["receipt", "actions", "products"],
+            zones: {
+              receipt: { ...prev.zones.receipt, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
+              actions: { ...prev.zones.actions, hidden: false, offsetX: 0, offsetY: 0 },
+              products: { ...prev.zones.products, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
+            },
+          };
+        }
+        if (preset === "products_focus") {
+          setLeftWidth(clampLeftWidth(380));
+          return {
+            ...prev,
+            order: ["products", "actions", "receipt"],
+            zones: {
+              receipt: { ...prev.zones.receipt, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
+              actions: { ...prev.zones.actions, hidden: false, offsetX: 0, offsetY: 0 },
+              products: { ...prev.zones.products, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
+            },
+          };
+        }
+        setLeftWidth(clampLeftWidth(DEFAULT_LEFT_WIDTH));
+        return {
+          ...DEFAULT_POS_LAYOUT,
+          locked: false,
+        };
+      });
+    },
+    [clampLeftWidth, updatePosLayout],
+  );
+
+  const startZoneDrag = useCallback(
+    (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
+      if (posLayout.locked) return;
+      if ((e.target as HTMLElement).closest("button, input, select, textarea")) return;
+      e.preventDefault();
+      setActiveDragZone(zoneId);
+      setDraggingSplit(true);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const initialZone = posLayout.zones[zoneId];
+      const baseX = initialZone.offsetX;
+      const baseY = initialZone.offsetY;
+
+      const onMove = (moveEvent: globalThis.PointerEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        const clampedX = Math.max(-360, Math.min(360, baseX + dx));
+        const clampedY = Math.max(-240, Math.min(240, baseY + dy));
+        updatePosLayout((prev) => ({
+          ...prev,
+          zones: {
+            ...prev.zones,
+            [zoneId]: {
+              ...prev.zones[zoneId],
+              offsetX: Math.round(clampedX),
+              offsetY: Math.round(clampedY),
+            },
+          },
+        }));
+      };
+
+      const onUp = () => {
+        setActiveDragZone(null);
+        setDraggingSplit(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [posLayout.locked, posLayout.zones, updatePosLayout],
+  );
+
+  const startZoneResize = useCallback(
+    (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
+      if (posLayout.locked) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setActiveDragZone(zoneId);
+      setDraggingSplit(true);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const rect = e.currentTarget.parentElement?.getBoundingClientRect();
+      const startW = posLayout.zones[zoneId].width ?? rect?.width ?? 400;
+      const startH = posLayout.zones[zoneId].height ?? rect?.height ?? 320;
+
+      const onMove = (moveEvent: globalThis.PointerEvent) => {
+        const nextW = Math.max(160, Math.min(1100, Math.round(startW + (moveEvent.clientX - startX))));
+        const nextH = Math.max(64, Math.min(900, Math.round(startH + (moveEvent.clientY - startY))));
+        updatePosLayout((prev) => ({
+          ...prev,
+          zones: {
+            ...prev.zones,
+            [zoneId]: {
+              ...prev.zones[zoneId],
+              width: nextW,
+              height: nextH,
+            },
+          },
+        }));
+      };
+
+      const onUp = () => {
+        setActiveDragZone(null);
+        setDraggingSplit(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [posLayout.locked, posLayout.zones, updatePosLayout],
+  );
+
   const [calcOpen, setCalcOpen] = useState(false);
   const [quickPriceOpen, setQuickPriceOpen] = useState(false);
   const [quickWeightOpen, setQuickWeightOpen] = useState(false);
@@ -891,14 +1292,24 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     setRailCollapsed((prev) => {
       const next = !prev;
       rememberRailCollapsed(next);
+      updatePosLayout((layoutPrev) => ({
+        ...layoutPrev,
+        zones: {
+          ...layoutPrev.zones,
+          actions: {
+            ...layoutPrev.zones.actions,
+            compact: next,
+          },
+        },
+      }));
       return next;
     });
-  }, []);
+  }, [updatePosLayout]);
 
   const handleDividerPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
-      if (splitPinned) {
-        toast.info("التقسيم مثبت — فك الدبوس أولاً لتغيير العرض");
+      if (splitPinned || posLayout.locked) {
+        toast.info("التقسيم مثبت — فك التثبيت أو القفل أولاً لتغيير العرض");
         return;
       }
       e.preventDefault();
@@ -925,7 +1336,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [clampLeftWidth, leftWidth, splitPinned],
+    [clampLeftWidth, leftWidth, posLayout.locked, splitPinned],
   );
 
   useEffect(() => {
@@ -1022,7 +1433,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [askSerials, lang, modules, notify, t],
   );
 
-  // Quick price / manual item: uses parseAmount (no x10 multiplier) and attaches defaultTaxRateId
   const handleQuickPriceSubmit = useCallback(
     async ({ unitPrice, customName }: { unitPrice: number; customName?: string }) => {
       const trimmedName = (customName ?? "").trim();
@@ -1487,193 +1897,260 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const trackPercent = idleRoaming ? roamPercent : cyclePercent;
   const cartFillRatio = idleRoaming ? 0 : cycleStep / CART_TRACK_CAPACITY;
 
-  const closed = till.isSuccess && till.data === null;
-  const closedView = (
-    <div className="grid flex-1 place-items-center p-6">
-      <EmptyState
-        icon={Lock}
-        title={t("pos:closed.title")}
-        body={t("pos:closed.body")}
-        action={
-          <div className="flex gap-2">
-            {can("cash.open") ? (
-              <Button variant="primary" size="lg" onClick={() => setDialog({ kind: "openSession" })}>
-                <Wallet aria-hidden />
-                {t("pos:closed.open")}
-              </Button>
-            ) : null}
-            <Button variant="outline" size="lg" onClick={() => void navigate(backOfficeHome(session))}>
-              {t("pos:closed.back")}
-            </Button>
-          </div>
-        }
-      />
-    </div>
-  );
+  const isHorizontalToolbar = posLayout.toolbarOrientation === "horizontal";
+  const actionsCompact = isHorizontalToolbar ? false : (railCollapsed || posLayout.zones.actions.compact);
 
   const pos = cn(
-    "min-h-12 w-full flex-col gap-0.5 text-sm [&_kbd]:ms-0",
-    railCollapsed ? "px-1 [&_span]:sr-only" : "px-1.5",
+    "text-sm [&_kbd]:ms-0",
+    isHorizontalToolbar
+      ? "h-10 shrink-0 flex-row gap-1.5 px-2.5"
+      : cn("min-h-12 w-full flex-col gap-0.5", actionsCompact ? "px-1 [&_span]:sr-only" : "px-1.5"),
   );
+
   const actions = (
-    <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        onClick={toggleRailCollapsed}
-        title={railCollapsed ? "تمديد الشريط الجانبي" : "طي الشريط الجانبي"}
-        aria-label={railCollapsed ? "تمديد الشريط الجانبي" : "طي الشريط الجانبي"}
-        aria-expanded={!railCollapsed}
-        className="mb-0.5 inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-line bg-surface text-xs font-semibold text-ink-2 transition-colors hover:border-brand hover:text-ink"
-      >
-        {railCollapsed ? (
-          <ChevronRight aria-hidden className="size-4 rtl:rotate-180" />
-        ) : (
-          <>
-            <ChevronLeft aria-hidden className="size-4 rtl:rotate-180" />
-            <span>طي</span>
-          </>
+    <div
+      className={cn(
+        "flex gap-1.5",
+        isHorizontalToolbar ? "flex-row flex-wrap items-center justify-between w-full" : "flex-col",
+      )}
+    >
+      <div
+        className={cn(
+          "flex gap-1.5",
+          isHorizontalToolbar ? "flex-row flex-wrap items-center" : "flex-col",
         )}
-      </button>
+      >
+        {!isHorizontalToolbar ? (
+          <button
+            type="button"
+            onClick={toggleRailCollapsed}
+            title={actionsCompact ? "تمديد الشريط الوسطاني" : "تصغير الشريط الوسطاني"}
+            aria-label={actionsCompact ? "تمديد الشريط الوسطاني" : "تصغير الشريط الوسطاني"}
+            aria-expanded={!actionsCompact}
+            className="mb-0.5 inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-line bg-surface text-xs font-semibold text-ink-2 transition-colors hover:border-brand hover:text-ink"
+          >
+            {actionsCompact ? (
+              <ChevronRight aria-hidden className="size-4 rtl:rotate-180" />
+            ) : (
+              <>
+                <ChevronLeft aria-hidden className="size-4 rtl:rotate-180" />
+                <span>تصغير</span>
+              </>
+            )}
+          </button>
+        ) : null}
 
-      {/* Quick actions at the top */}
-      <Button
-        type="button"
-        variant="secondary"
-        className={pos}
-        title="سعر سريع"
-        onClick={() => setQuickPriceOpen(true)}
-      >
-        <Tag aria-hidden />
-        <span>سعر سريع</span>
-      </Button>
-      <Button
-        type="button"
-        variant="secondary"
-        className={pos}
-        title="وزن سريع"
-        onClick={() => setQuickWeightOpen(true)}
-      >
-        <Barcode aria-hidden />
-        <span>وزن سريع</span>
-      </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className={pos}
+          title="سعر سريع"
+          onClick={() => setQuickPriceOpen(true)}
+        >
+          <Tag aria-hidden />
+          <span>سعر سريع</span>
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className={pos}
+          title="وزن سريع"
+          onClick={() => setQuickWeightOpen(true)}
+        >
+          <Barcode aria-hidden />
+          <span>وزن سريع</span>
+        </Button>
 
-      <div className="my-0.5 border-t border-line" />
+        <div
+          className={cn(
+            isHorizontalToolbar ? "mx-1 h-6 w-px bg-line" : "my-0.5 border-t border-line",
+          )}
+        />
 
-      {/* Core POS actions below */}
-      <Button
-        className={pos}
-        title={t("pos:actions.customer")}
-        onClick={() => setDialog({ kind: "customer" })}
-        {...cap("customer")}
-      >
-        <User aria-hidden />
-        <span>{t("pos:actions.customer")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.discount")}
-        onClick={() => setDialog({ kind: "discount" })}
-        {...cap("discount")}
-      >
-        <Percent aria-hidden />
-        <span>{t("pos:actions.discount")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.hold")}
-        onClick={hold}
-        disabled={!can("sales.hold")}
-        {...cap("hold")}
-      >
-        <Pause aria-hidden />
-        <span>{t("pos:actions.hold")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.return")}
-        onClick={() => setDialog({ kind: "return" })}
-        {...cap("return")}
-      >
-        <Undo2 aria-hidden className="rtl:-scale-x-100" />
-        <span>{t("pos:actions.return")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.drawer")}
-        onClick={() => setDialog({ kind: "drawer" })}
-        disabled={!can("cash.paid_in_out")}
-        {...cap("drawer")}
-      >
-        <Wallet aria-hidden />
-        <span>{t("pos:actions.drawer")}</span>
-      </Button>
-      <Button
-        className={pos}
-        title={t("pos:actions.menu")}
-        onClick={() => setDialog({ kind: "menu" })}
-        {...cap("menu")}
-      >
-        <Menu aria-hidden />
-        <span>{t("pos:actions.menu")}</span>
-      </Button>
+        <Button
+          className={pos}
+          title={t("pos:actions.customer")}
+          onClick={() => setDialog({ kind: "customer" })}
+          {...cap("customer")}
+        >
+          <User aria-hidden />
+          <span>{t("pos:actions.customer")}</span>
+        </Button>
+        <Button
+          className={pos}
+          title={t("pos:actions.discount")}
+          onClick={() => setDialog({ kind: "discount" })}
+          {...cap("discount")}
+        >
+          <Percent aria-hidden />
+          <span>{t("pos:actions.discount")}</span>
+        </Button>
+        <Button
+          className={pos}
+          title={t("pos:actions.hold")}
+          onClick={hold}
+          disabled={!can("sales.hold")}
+          {...cap("hold")}
+        >
+          <Pause aria-hidden />
+          <span>{t("pos:actions.hold")}</span>
+        </Button>
+        <Button
+          className={pos}
+          title={t("pos:actions.return")}
+          onClick={() => setDialog({ kind: "return" })}
+          {...cap("return")}
+        >
+          <Undo2 aria-hidden className="rtl:-scale-x-100" />
+          <span>{t("pos:actions.return")}</span>
+        </Button>
+        <Button
+          className={pos}
+          title={t("pos:actions.drawer")}
+          onClick={() => setDialog({ kind: "drawer" })}
+          disabled={!can("cash.paid_in_out")}
+          {...cap("drawer")}
+        >
+          <Wallet aria-hidden />
+          <span>{t("pos:actions.drawer")}</span>
+        </Button>
+        <Button
+          className={pos}
+          title={t("pos:actions.menu")}
+          onClick={() => setDialog({ kind: "menu" })}
+          {...cap("menu")}
+        >
+          <Menu aria-hidden />
+          <span>{t("pos:actions.menu")}</span>
+        </Button>
+      </div>
     </div>
   );
   const heldCount = held.data?.length ?? 0;
 
-  return (
-    <div
-      className={cn(
-        "relative flex h-dvh flex-col bg-bg text-[1.125rem] text-ink",
-        draggingSplit && "select-none",
-      )}
-      onPointerUp={refocus}
-    >
-      <DemoRibbon />
-      <BackupAlerts session={session} />
-      <LanBanner />
-      {van ? (
-        <Suspense fallback={null}>
-          <VanBanner />
-        </Suspense>
-      ) : null}
-      {closed ? (
-        closedView
-      ) : (
-        <div
-          ref={splitContainerRef}
-          dir="ltr"
-          className="relative flex min-h-0 flex-1 flex-row overflow-hidden"
-        >
-          {/* Splitter bar positioned at leftWidth from the left edge */}
-          <div
-            style={{ left: `${leftWidth}px` }}
-            className={cn(
-              "pointer-events-auto fixed inset-y-0 z-30 flex w-2.5 -translate-x-1/2 flex-col items-center border-x border-line bg-surface-2/50 transition-colors",
-              !splitPinned && "cursor-col-resize hover:bg-surface-2",
-              draggingSplit && "bg-surface-2",
-            )}
-            onPointerDown={handleDividerPointerDown}
-          >
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={togglePin}
-              title={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
-              aria-label={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
-              aria-pressed={splitPinned}
-              className={cn(
-                "mt-2 inline-flex size-6 items-center justify-center rounded-md border shadow-xs transition-colors",
-                splitPinned
-                  ? "border-amber-500 bg-amber-500 text-slate-950"
-                  : "border-line bg-surface text-ink-2 hover:border-amber-500 hover:text-amber-500",
-              )}
-            >
-              {splitPinned ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
-            </button>
-          </div>
+  const zoneMeta: Record<PosZoneId, { title: string; badge: string }> = useMemo(
+    () => ({
+      receipt: {
+        title: "الإيصال",
+        badge: `${lines.length} صنف`,
+      },
+      actions: {
+        title: "أزرار الكاشير",
+        badge: isHorizontalToolbar ? "أفقي" : "رأسي",
+      },
+      products: {
+        title: "الباركود والمنتجات",
+        badge: category ? "قسم محدد" : "الكل",
+      },
+    }),
+    [category, isHorizontalToolbar, lines.length],
+  );
 
-          {/* Receipt panel on the left */}
-          <div dir="rtl" style={{ width: `${leftWidth}px` }} className="flex min-h-0 shrink-0">
+  const hiddenZones = (["receipt", "actions", "products"] as PosZoneId[]).filter(
+    (id) => posLayout.zones[id].hidden,
+  );
+
+  const renderZoneHeader = (zoneId: PosZoneId, extraRight?: React.ReactNode) => {
+    const z = posLayout.zones[zoneId];
+    const isCompact = zoneId === "actions" ? actionsCompact : z.compact;
+    return (
+      <div
+        onPointerDown={(e) => startZoneDrag(zoneId, e)}
+        className={cn(
+          "flex shrink-0 items-center justify-between gap-1.5 border-b border-line bg-surface-2/80 px-2.5 py-1.5 text-xs",
+          !posLayout.locked && "cursor-move select-none",
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-1.5">
+          {!posLayout.locked ? <Move aria-hidden className="size-3.5 shrink-0 text-ink-2" /> : null}
+          <span className="truncate font-bold text-ink">{zoneMeta[zoneId].title}</span>
+          <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-ink-2">
+            {zoneMeta[zoneId].badge}
+          </span>
+          {extraRight}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            disabled={posLayout.locked}
+            onClick={() => cycleZonePosition(zoneId)}
+            title="تبديل موضع الجزء"
+            aria-label={`تبديل موضع ${zoneMeta[zoneId].title}`}
+            className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink disabled:opacity-40"
+          >
+            <Layers aria-hidden className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleZoneCompact(zoneId)}
+            title={isCompact ? "تمديد الجزء" : "تصغير الجزء"}
+            aria-label={isCompact ? `تمديد ${zoneMeta[zoneId].title}` : `تصغير ${zoneMeta[zoneId].title}`}
+            className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink"
+          >
+            <Minimize2 aria-hidden className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            disabled={posLayout.locked}
+            onClick={() => minimizeZoneToIcon(zoneId)}
+            title="إنزال كأيقونة في الصفحة"
+            aria-label={`إنزال ${zoneMeta[zoneId].title} كأيقونة`}
+            className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink disabled:opacity-40"
+          >
+            <X aria-hidden className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderResizeHandle = (zoneId: PosZoneId) => {
+    if (posLayout.locked) return null;
+    return (
+      <div
+        onPointerDown={(e) => startZoneResize(zoneId, e)}
+        title="تمديد حر بالماوس"
+        aria-label={`تمديد ${zoneMeta[zoneId].title}`}
+        className="absolute bottom-1 end-1 z-20 flex size-4 cursor-nwse-resize items-end justify-end rounded-sm bg-surface-2/90 p-0.5 text-ink-2 hover:bg-brand hover:text-brand-ink"
+      >
+        <span className="block size-2 border-b-2 border-e-2 border-current" />
+      </div>
+    );
+  };
+
+  const renderZoneCard = (zoneId: PosZoneId) => {
+    const z = posLayout.zones[zoneId];
+    if (z.hidden) return null;
+
+    const customStyle: React.CSSProperties = {
+      transform:
+        z.offsetX !== 0 || z.offsetY !== 0
+          ? `translate3d(${z.offsetX}px, ${z.offsetY}px, 0)`
+          : undefined,
+      ...(z.width ? { width: `${z.width}px` } : {}),
+      ...(z.height ? { height: `${z.height}px` } : {}),
+    };
+
+    if (zoneId === "receipt") {
+      const receiptWidth = z.width ?? leftWidth;
+      return (
+        <div
+          key="receipt"
+          dir="rtl"
+          style={{
+            width: `${receiptWidth}px`,
+            ...(z.height ? { height: `${z.height}px` } : {}),
+            transform: customStyle.transform,
+          }}
+          className={cn(
+            "relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface transition-shadow",
+            activeDragZone === "receipt" && "z-20 ring-2 ring-brand shadow-xl",
+            z.compact && "max-h-44",
+          )}
+        >
+          {renderZoneHeader("receipt")}
+          <div className="flex min-h-0 flex-1">
             <CartPanel
               className="w-full"
               lines={lines}
@@ -1718,7 +2195,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                 </Button>
               }
               banner={
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => setCalcOpen(true)}
@@ -1782,165 +2259,372 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                   ) : null}
                 </div>
               }
-              actions={actions}
-              actionsCollapsed={railCollapsed}
+              actions={null}
+              actionsCollapsed={actionsCompact}
             />
           </div>
+          {renderResizeHandle("receipt")}
+        </div>
+      );
+    }
 
-          {/* ScanField & ProductGrid on the right */}
-          <main dir="rtl" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4">
-            <ScanField
-              inputRef={scanRef}
-              value={text}
-              onValueChange={setText}
-              multiplier={multiplier}
-              onCode={(code) => void lookup(code)}
-              onEmptyEnter={tillPayment.fixed ? pay : undefined}
-              onPick={pickProduct}
-              onMultiplier={(qty) => useCart.getState().setMultiplier(qty)}
-              onBump={(direction) => {
-                const state = useCart.getState();
-                const index = state.selected;
-                const line = index === null ? undefined : state.lines[index];
-                if (index === null || !line) return;
-                if (direction === 1) state.bump(index, 1);
-                else if (line.line.qty > 1_000) void reduceQty(index, line.line.qty - 1_000);
-              }}
-              onVoid={() => {
-                const index = useCart.getState().selected;
-                if (index !== null) void voidLine(index);
-              }}
-              onMove={(delta) => useCart.getState().move(delta)}
-            />
-            <div
-              className={cn(
-                "relative flex h-9 items-center overflow-hidden rounded-control border border-line bg-surface-2/70 px-3 transition-colors",
-                justAddedPulse && "border-primary/50 bg-surface-2",
-              )}
+    if (zoneId === "actions") {
+      return (
+        <div
+          key="actions"
+          dir="rtl"
+          style={customStyle}
+          className={cn(
+            "relative flex shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface-2/80 transition-shadow",
+            isHorizontalToolbar ? "w-full" : actionsCompact ? "w-14" : "w-36",
+            activeDragZone === "actions" && "z-20 ring-2 ring-brand shadow-xl",
+          )}
+        >
+          {renderZoneHeader(
+            "actions",
+            <button
+              type="button"
+              onClick={toggleToolbarOrientation}
+              title={isHorizontalToolbar ? "تحويل الشريط لعمودي" : "تمديد الشريط أفقياً"}
+              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-ink hover:border-brand"
             >
-              <div className="pointer-events-none absolute inset-x-3 top-1/2 h-0.5 -translate-y-1/2 bg-line/60" />
-              <div
-                className="relative z-10 flex items-center gap-1.5 text-ink transition-all duration-500 ease-out"
-                style={{ marginInlineStart: `${trackPercent}%` }}
-              >
-                <SupermarketCartIcon
-                  fillRatio={cartFillRatio}
-                  roaming={idleRoaming}
-                  justAdded={justAddedPulse}
-                />
-                <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold text-ink-2">
-                  {idleRoaming ? "خمول" : `${cyclePercent}%`}
-                </span>
-              </div>
-              {waitingForNextItem ? (
-                <span
-                  role="status"
-                  className="ms-auto inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning animate-pulse"
-                >
-                  <Clock aria-hidden className="h-3.5 w-3.5" />
-                  بانتظار الصنف التالي
-                </span>
-              ) : null}
+              {isHorizontalToolbar ? "رأسي" : "أفقي"}
+            </button>,
+          )}
+          <div className="p-1.5">{actions}</div>
+          {renderResizeHandle("actions")}
+        </div>
+      );
+    }
+
+    return (
+      <main
+        key="products"
+        dir="rtl"
+        style={customStyle}
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto rounded-lg border border-line bg-surface/40 p-4 transition-shadow",
+          activeDragZone === "products" && "z-20 ring-2 ring-brand shadow-xl",
+          z.compact && "max-h-48",
+        )}
+      >
+        <div className="-mx-4 -mt-4 mb-1">{renderZoneHeader("products")}</div>
+        <ScanField
+          inputRef={scanRef}
+          value={text}
+          onValueChange={setText}
+          multiplier={multiplier}
+          onCode={(code) => void lookup(code)}
+          onEmptyEnter={tillPayment.fixed ? pay : undefined}
+          onPick={pickProduct}
+          onMultiplier={(qty) => useCart.getState().setMultiplier(qty)}
+          onBump={(direction) => {
+            const state = useCart.getState();
+            const index = state.selected;
+            const line = index === null ? undefined : state.lines[index];
+            if (index === null || !line) return;
+            if (direction === 1) state.bump(index, 1);
+            else if (line.line.qty > 1_000) void reduceQty(index, line.line.qty - 1_000);
+          }}
+          onVoid={() => {
+            const index = useCart.getState().selected;
+            if (index !== null) void voidLine(index);
+          }}
+          onMove={(delta) => useCart.getState().move(delta)}
+        />
+        <div
+          className={cn(
+            "relative flex h-9 items-center overflow-hidden rounded-control border border-line bg-surface-2/70 px-3 transition-colors",
+            justAddedPulse && "border-primary/50 bg-surface-2",
+          )}
+        >
+          <div className="pointer-events-none absolute inset-x-3 top-1/2 h-0.5 -translate-y-1/2 bg-line/60" />
+          <div
+            className="relative z-10 flex items-center gap-1.5 text-ink transition-all duration-500 ease-out"
+            style={{ marginInlineStart: `${trackPercent}%` }}
+          >
+            <SupermarketCartIcon
+              fillRatio={cartFillRatio}
+              roaming={idleRoaming}
+              justAdded={justAddedPulse}
+            />
+            <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold text-ink-2">
+              {idleRoaming ? "خمول" : `${cyclePercent}%`}
+            </span>
+          </div>
+          {waitingForNextItem ? (
+            <span
+              role="status"
+              className="ms-auto inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning animate-pulse"
+            >
+              <Clock aria-hidden className="h-3.5 w-3.5" />
+              بانتظار الصنف التالي
+            </span>
+          ) : null}
+        </div>
+        {selectedLine ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface-2/80 px-3 py-2 transition-colors">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="truncate font-semibold">{selectedLine.display.name}</span>
+              <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-semibold text-ink-2">
+                <bdi dir="ltr">
+                  {formatQty(selectedLine.line.qty, lang)} {selectedLine.display.unitCode}
+                </bdi>
+              </span>
+              <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-bold text-ink">
+                <Amount value={selectedSubtotal} />
+              </span>
             </div>
-            {selectedLine ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface-2/80 px-3 py-2 transition-colors">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="truncate font-semibold">{selectedLine.display.name}</span>
-                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-semibold text-ink-2">
-                    <bdi dir="ltr">
-                      {formatQty(selectedLine.line.qty, lang)} {selectedLine.display.unitCode}
-                    </bdi>
-                  </span>
-                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-bold text-ink">
-                    <Amount value={selectedSubtotal} />
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                      needsOwnerApproval
-                        ? "bg-warning-soft text-warning"
-                        : "bg-info-soft text-info",
-                    )}
-                  >
-                    {needsOwnerApproval ? (
-                      <>
-                        <KeyRound aria-hidden className="h-3.5 w-3.5" />
-                        موافقة المالك
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck aria-hidden className="h-3.5 w-3.5" />
-                        صلاحية مفعلة
-                      </>
-                    )}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="danger"
-                    disabled={approval.pending || quickBusy || isVoiding}
-                    onClick={() => {
-                      if (selected !== null) void voidLine(selected);
-                    }}
-                    shortcut="Delete"
-                    shortcutLabel="Delete"
-                  >
-                    {isVoiding ? (
-                      <Loader2 aria-hidden className="animate-spin" />
-                    ) : (
-                      <Trash2 aria-hidden />
-                    )}
-                    حذف
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {notice ? (
-              <p
-                role={notice.tone === "error" ? "alert" : "status"}
+            <div className="flex items-center gap-2">
+              <span
                 className={cn(
-                  "rounded-control p-3 font-semibold",
-                  notice.tone === "error" ? "bg-danger-soft text-danger" : "bg-info-soft text-info",
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                  needsOwnerApproval
+                    ? "bg-warning-soft text-warning"
+                    : "bg-info-soft text-info",
                 )}
               >
-                {notice.text}
-              </p>
-            ) : lastScan ? (
-              <p className="flex items-center justify-between rounded-control bg-surface p-3 text-lg">
-                <span>{t("pos:lastScan", { name: lastScan.name })}</span>
-                <Amount value={lastScan.price} className="font-bold" />
-              </p>
+                {needsOwnerApproval ? (
+                  <>
+                    <KeyRound aria-hidden className="h-3.5 w-3.5" />
+                    موافقة المالك
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck aria-hidden className="h-3.5 w-3.5" />
+                    صلاحية مفعلة
+                  </>
+                )}
+              </span>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={approval.pending || quickBusy || isVoiding}
+                onClick={() => {
+                  if (selected !== null) void voidLine(selected);
+                }}
+                shortcut="Delete"
+                shortcutLabel="Delete"
+              >
+                {isVoiding ? (
+                  <Loader2 aria-hidden className="animate-spin" />
+                ) : (
+                  <Trash2 aria-hidden />
+                )}
+                حذف
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {notice ? (
+          <p
+            role={notice.tone === "error" ? "alert" : "status"}
+            className={cn(
+              "rounded-control p-3 font-semibold",
+              notice.tone === "error" ? "bg-danger-soft text-danger" : "bg-info-soft text-info",
+            )}
+          >
+            {notice.text}
+          </p>
+        ) : lastScan ? (
+          <p className="flex items-center justify-between rounded-control bg-surface p-3 text-lg">
+            <span>{t("pos:lastScan", { name: lastScan.name })}</span>
+            <Amount value={lastScan.price} className="font-bold" />
+          </p>
+        ) : null}
+        {modules.includes("department_keys") || modules.includes("flexy") ? (
+          <div className="flex flex-wrap gap-2">
+            {modules.includes("department_keys") ? (
+              <Button
+                variant={departments ? "secondary" : "outline"}
+                aria-pressed={departments}
+                onClick={toggleDepartments}
+                {...cap("department_keys")}
+              >
+                {t("pos:actions.departments")}
+              </Button>
             ) : null}
-            {modules.includes("department_keys") || modules.includes("flexy") ? (
-              <div className="flex flex-wrap gap-2">
-                {modules.includes("department_keys") ? (
-                  <Button
-                    variant={departments ? "secondary" : "outline"}
-                    aria-pressed={departments}
-                    onClick={toggleDepartments}
-                    {...cap("department_keys")}
-                  >
-                    {t("pos:actions.departments")}
-                  </Button>
-                ) : null}
-                {modules.includes("flexy") ? (
-                  <Button variant="outline" onClick={flexy} {...cap("flexy")}>
-                    {t("pos:actions.flexy")}
-                  </Button>
-                ) : null}
+            {modules.includes("flexy") ? (
+              <Button variant="outline" onClick={flexy} {...cap("flexy")}>
+                {t("pos:actions.flexy")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {departments ? (
+          <Suspense fallback={null}>
+            <DepartmentKeysPanel />
+          </Suspense>
+        ) : (
+          <ProductGrid onPick={pickProduct} category={category} onCategory={setCategory} />
+        )}
+        {renderResizeHandle("products")}
+      </main>
+    );
+  };
+
+  return (
+    <div
+      className={cn(
+        "relative flex h-dvh flex-col bg-bg text-[1.125rem] text-ink",
+        draggingSplit && "select-none",
+      )}
+      onPointerUp={refocus}
+    >
+      <DemoRibbon />
+      <BackupAlerts session={session} />
+      <LanBanner />
+      {van ? (
+        <Suspense fallback={null}>
+          <VanBanner />
+        </Suspense>
+      ) : null}
+
+      {/* Top quick layout & preset bar inside the gray/dark POS theme */}
+      <div
+        dir="rtl"
+        className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface-2/80 px-3 py-1.5 text-xs"
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggleLayoutLock}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-md border px-2 font-semibold transition-colors",
+              posLayout.locked
+                ? "border-amber-500 bg-amber-500 text-slate-950"
+                : "border-line bg-surface text-ink hover:border-brand",
+            )}
+          >
+            {posLayout.locked ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
+            <span>{posLayout.locked ? "مثبّت" : "تعديل حر"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => swapZones("receipt", "products")}
+            disabled={posLayout.locked}
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand disabled:opacity-40"
+          >
+            <Layers aria-hidden className="size-3.5" />
+            <span>تبديل الإيصال والمنتجات</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleToolbarOrientation}
+            disabled={posLayout.locked}
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand disabled:opacity-40"
+          >
+            <span>{isHorizontalToolbar ? "أزرار رأسية" : "أزرار أفقية"}</span>
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => applyPreset("default")}
+            disabled={posLayout.locked}
+            className="h-7 rounded-md border border-line bg-surface px-2 font-semibold text-ink-2 hover:border-brand hover:text-ink disabled:opacity-40"
+          >
+            افتراضي
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset("receipt_focus")}
+            disabled={posLayout.locked}
+            className="h-7 rounded-md border border-line bg-surface px-2 font-semibold text-ink-2 hover:border-brand hover:text-ink disabled:opacity-40"
+          >
+            تركيز الإيصال
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset("products_focus")}
+            disabled={posLayout.locked}
+            className="h-7 rounded-md border border-line bg-surface px-2 font-semibold text-ink-2 hover:border-brand hover:text-ink disabled:opacity-40"
+          >
+            تركيز المنتجات
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset("default")}
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand"
+          >
+            <RotateCcw aria-hidden className="size-3.5" />
+            <span>استعادة</span>
+          </button>
+        </div>
+      </div>
+
+      {closed ? (
+        closedView
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            ref={splitContainerRef}
+            dir="ltr"
+            className={cn(
+              "relative flex min-h-0 flex-1 gap-2 overflow-hidden p-2",
+              isHorizontalToolbar ? "flex-col" : "flex-row",
+            )}
+          >
+            {!isHorizontalToolbar ? (
+              <div
+                style={{ left: `${leftWidth}px` }}
+                className={cn(
+                  "pointer-events-auto fixed inset-y-0 z-30 flex w-2 -translate-x-1/2 flex-col items-center border-x border-line bg-surface-2/40 transition-colors",
+                  !splitPinned && !posLayout.locked && "cursor-col-resize hover:bg-surface-2",
+                  draggingSplit && "bg-surface-2",
+                )}
+                onPointerDown={handleDividerPointerDown}
+              >
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={togglePin}
+                  title={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
+                  aria-label={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
+                  aria-pressed={splitPinned}
+                  className={cn(
+                    "mt-2 inline-flex size-6 items-center justify-center rounded-md border shadow-xs transition-colors",
+                    splitPinned
+                      ? "border-amber-500 bg-amber-500 text-slate-950"
+                      : "border-line bg-surface text-ink-2 hover:border-amber-500 hover:text-amber-500",
+                  )}
+                >
+                  {splitPinned ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
+                </button>
               </div>
             ) : null}
-            {departments ? (
-              <Suspense fallback={null}>
-                <DepartmentKeysPanel />
-              </Suspense>
-            ) : (
-              <ProductGrid onPick={pickProduct} category={category} onCategory={setCategory} />
-            )}
-          </main>
+
+            {posLayout.order.map((zoneId) => renderZoneCard(zoneId))}
+          </div>
+
+          {/* Minimized zones docked as icons/pills inside the same POS screen while background stays active */}
+          {hiddenZones.length > 0 ? (
+            <div
+              dir="rtl"
+              className="flex flex-wrap items-center gap-2 border-t border-line bg-surface-2/90 px-3 py-1.5 text-xs"
+            >
+              <span className="font-semibold text-ink-2">أجزاء مصغّرة كأيقونات (نشطة بالخلفية):</span>
+              {hiddenZones.map((zoneId) => (
+                <button
+                  key={zoneId}
+                  type="button"
+                  onClick={() => restoreZone(zoneId)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-brand/50 bg-surface px-3 font-bold text-ink shadow-xs transition-colors hover:bg-brand hover:text-brand-ink"
+                >
+                  <span>{zoneMeta[zoneId].title}</span>
+                  <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
+                    {zoneMeta[zoneId].badge}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
+
       <QuickPriceModal
         open={quickPriceOpen}
         onClose={() => setQuickPriceOpen(false)}
