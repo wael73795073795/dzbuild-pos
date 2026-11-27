@@ -1831,7 +1831,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const bound = (Object.keys(DEFAULT_KEYS) as TillAction[]).filter((action) => handlers[action]);
   const hotkeys: Partial<Record<Hotkey, () => void>> = { F11: () => setDialog({ kind: "scale" }) };
   for (const action of bound) hotkeys[keys[action]] = handlers[action];
-  useHotkeys(hotkeys, dialog === null && !anySubModal && !approval.pending && !quickBusy);
+  const activeHotkeys: Record<string, () => void> = {};
+  for (const [hotkeyKey, handlerFn] of Object.entries(hotkeys)) {
+    if (hotkeyKey && handlerFn) {
+      activeHotkeys[hotkeyKey] = handlerFn;
+    }
+  }
+  useHotkeys(activeHotkeys, dialog === null && !anySubModal && !approval.pending && !quickBusy);
 
   const cap = (action: TillAction) => ({
     shortcut: ariaKey(keys[action]),
@@ -2620,7 +2626,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               </div>
             ) : null}
 
-            {posLayout.order.map((zoneId) => renderZoneCard(zoneId))}
+            {([
+              posLayout.order[0] ?? "receipt",
+              posLayout.order[1] ?? "actions",
+              posLayout.order[2] ?? "products",
+            ] as PosZoneId[]).map((zoneId) => renderZoneCard(zoneId))}
           </div>
 
           {hiddenZones.length > 0 ? (
