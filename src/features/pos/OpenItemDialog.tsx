@@ -14,6 +14,8 @@ import { useCart } from "./cart-store";
 
 type OpenItem = { description: string; unitPrice: number; taxRateId: string; qty: number };
 
+const DEFAULT_OPEN_ITEM_NAME = "صنف بدون باركود";
+
 /** SAL-018: an article without a catalogue entry; the backend asks for `sales.price_override`.
  * It goes into the till's cart, or to `onAdd` (the document editor's lines). */
 export function OpenItemDialog({
@@ -25,7 +27,9 @@ export function OpenItemDialog({
 }) {
   const { t } = useTranslation();
   const lang = useLang();
-  const rates = (useTaxRates().data ?? []).filter((r) => r.active);
+  const allRates = useTaxRates().data ?? [];
+  const activeRates = allRates.filter((r) => r.active);
+  const rates = activeRates.length > 0 ? activeRates : allRates;
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
   const [qty, setQty] = useState("1");
@@ -37,12 +41,13 @@ export function OpenItemDialog({
     const quantity = parseQty(qty, 3);
     const taxRateId = rateId || rates[0]?.id || "";
     const found: Record<string, string> = {};
-    if (description.trim() === "") found.description = t("validation:required");
     if (unitPrice === null || unitPrice <= 0) found.price = t("validation:amountFormat");
-    if (quantity === null) found.qty = t("validation:qtyFormat");
+    if (quantity === null || quantity <= 0) found.qty = t("validation:qtyFormat");
+    if (taxRateId === "") found.rate = t("validation:required");
     setErrors(found);
     if (Object.keys(found).length > 0 || unitPrice === null || quantity === null || taxRateId === "") return;
-    const item = { description: description.trim(), unitPrice, taxRateId, qty: quantity };
+    const finalDescription = description.trim() || DEFAULT_OPEN_ITEM_NAME;
+    const item = { description: finalDescription, unitPrice, taxRateId, qty: quantity };
     if (onAdd) onAdd(item);
     else useCart.getState().addOpenItem(item);
     onClose();
@@ -70,6 +75,7 @@ export function OpenItemDialog({
             dir="auto"
             autoFocus
             maxLength={120}
+            placeholder={DEFAULT_OPEN_ITEM_NAME}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -80,7 +86,7 @@ export function OpenItemDialog({
         <Field id="open-qty" label={t("pos:edit.qty")} error={errors.qty}>
           <NumericInput id="open-qty" kind="qty" value={qty} onValueChange={setQty} />
         </Field>
-        <Field id="open-rate" label={t("pos:openItem.taxRate")}>
+        <Field id="open-rate" label={t("pos:openItem.taxRate")} error={errors.rate}>
           <NativeSelect
             id="open-rate"
             value={rateId || rates[0]?.id || ""}
