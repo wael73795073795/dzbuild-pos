@@ -640,6 +640,7 @@ function QuickWeightModal({
     </div>
   );
 }
+
 function PosCalculatorModal({
   open,
   onClose,
@@ -1161,6 +1162,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     },
     [clampLeftWidth, updatePosLayout],
   );
+
   const startZoneDrag = useCallback(
     (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
       if (posLayout.locked) return;
@@ -2549,7 +2551,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             disabled={posLayout.locked}
             className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand disabled:opacity-40"
           >
-                        <Layers aria-hidden className="size-3.5" />
+            <Layers aria-hidden className="size-3.5" />
             <span>تبديل الإيصال والمنتجات</span>
           </button>
 
