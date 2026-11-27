@@ -99,7 +99,7 @@ export function useKeyMap(): Record<TillAction, Hotkey> {
   }, []);
 
   return useMemo(() => {
-    const map: Record<TillAction, Hotkey> = { ...DEFAULT_KEYS };
+    const map = { ...DEFAULT_KEYS } as Record<TillAction, Hotkey>;
     for (const [action, key] of data ?? []) {
       if (action in map && isTillKey(key)) map[action as TillAction] = key;
     }
