@@ -179,14 +179,9 @@ function readPosLayout(): PosLayoutConfig {
     if (!raw) return DEFAULT_POS_LAYOUT;
     const parsed = JSON.parse(raw) as Partial<PosLayoutConfig>;
     const validIds: PosZoneId[] = ["receipt", "actions", "products"];
-    const orderList: PosZoneId[] = [];
-    if (Array.isArray(parsed.order)) {
-      for (const id of parsed.order) {
-        if (validIds.includes(id as PosZoneId) && !orderList.includes(id as PosZoneId)) {
-          orderList.push(id as PosZoneId);
-        }
-      }
-    }
+    const orderList = Array.isArray(parsed.order)
+      ? parsed.order.filter((id): id is PosZoneId => validIds.includes(id as PosZoneId))
+      : [];
     for (const id of validIds) {
       if (!orderList.includes(id)) orderList.push(id);
     }
@@ -1033,17 +1028,18 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const cycleZonePosition = useCallback(
     (zoneId: PosZoneId) => {
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       updatePosLayout((prev) => {
         if (prev.locked) {
           toast.info("التخطيط مقفل — فك القفل أولاً لتحريك الأجزاء");
           return prev;
         }
-        const idx = prev.order.indexOf(zoneId);
+        const idx = prev.order.indexOf(safeZoneId);
         if (idx === -1) return prev;
         const nextIdx = (idx + 1) % prev.order.length;
         const nextOrder = [...prev.order] as [PosZoneId, PosZoneId, PosZoneId];
         const [moved] = nextOrder.splice(idx, 1);
-        nextOrder.splice(nextIdx, 0, moved);
+        nextOrder.splice(nextIdx, 0, moved ?? safeZoneId);
         return {
           ...prev,
           order: nextOrder,
@@ -1055,10 +1051,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const toggleZoneCompact = useCallback(
     (zoneId: PosZoneId) => {
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       updatePosLayout((prev) => {
-        const currentZone = prev.zones[zoneId];
+        const currentZone = prev.zones[safeZoneId];
         const nextCompact = !currentZone.compact;
-        if (zoneId === "actions") {
+        if (safeZoneId === "actions") {
           setRailCollapsed(nextCompact);
           rememberRailCollapsed(nextCompact);
         }
@@ -1066,7 +1063,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           ...prev,
           zones: {
             ...prev.zones,
-            [zoneId]: {
+            [safeZoneId]: {
               ...currentZone,
               compact: nextCompact,
               hidden: false,
@@ -1080,12 +1077,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const minimizeZoneToIcon = useCallback(
     (zoneId: PosZoneId) => {
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       updatePosLayout((prev) => ({
         ...prev,
         zones: {
           ...prev.zones,
-          [zoneId]: {
-            ...prev.zones[zoneId],
+          [safeZoneId]: {
+            ...prev.zones[safeZoneId],
             hidden: true,
           },
         },
@@ -1096,12 +1094,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const restoreZone = useCallback(
     (zoneId: PosZoneId) => {
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       updatePosLayout((prev) => ({
         ...prev,
         zones: {
           ...prev.zones,
-          [zoneId]: {
-            ...prev.zones[zoneId],
+          [safeZoneId]: {
+            ...prev.zones[safeZoneId],
             hidden: false,
             compact: false,
             offsetX: 0,
@@ -1165,14 +1164,15 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const startZoneDrag = useCallback(
     (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       if (posLayout.locked) return;
       if ((e.target as HTMLElement).closest("button, input, select, textarea")) return;
       e.preventDefault();
-      setActiveDragZone(zoneId);
+      setActiveDragZone(safeZoneId);
       setDraggingSplit(true);
       const startX = e.clientX;
       const startY = e.clientY;
-      const initialZone = posLayout.zones[zoneId];
+      const initialZone = posLayout.zones[safeZoneId];
       const baseX = initialZone.offsetX;
       const baseY = initialZone.offsetY;
 
@@ -1185,8 +1185,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           ...prev,
           zones: {
             ...prev.zones,
-            [zoneId]: {
-              ...prev.zones[zoneId],
+            [safeZoneId]: {
+              ...prev.zones[safeZoneId],
               offsetX: Math.round(clampedX),
               offsetY: Math.round(clampedY),
             },
@@ -1209,16 +1209,17 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const startZoneResize = useCallback(
     (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       if (posLayout.locked) return;
       e.preventDefault();
       e.stopPropagation();
-      setActiveDragZone(zoneId);
+      setActiveDragZone(safeZoneId);
       setDraggingSplit(true);
       const startX = e.clientX;
       const startY = e.clientY;
       const rect = e.currentTarget.parentElement?.getBoundingClientRect();
-      const startW = posLayout.zones[zoneId].width ?? rect?.width ?? 400;
-      const startH = posLayout.zones[zoneId].height ?? rect?.height ?? 320;
+      const startW = posLayout.zones[safeZoneId].width ?? rect?.width ?? 400;
+      const startH = posLayout.zones[safeZoneId].height ?? rect?.height ?? 320;
 
       const onMove = (moveEvent: globalThis.PointerEvent) => {
         const nextW = Math.max(160, Math.min(1100, Math.round(startW + (moveEvent.clientX - startX))));
@@ -1227,8 +1228,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           ...prev,
           zones: {
             ...prev.zones,
-            [zoneId]: {
-              ...prev.zones[zoneId],
+            [safeZoneId]: {
+              ...prev.zones[safeZoneId],
               width: nextW,
               height: nextH,
             },
@@ -2097,11 +2098,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   );
 
   const renderZoneHeader = (zoneId: PosZoneId, extraRight?: React.ReactNode) => {
-    const z = posLayout.zones[zoneId];
-    const isCompact = zoneId === "actions" ? actionsCompact : z.compact;
+    const safeId: PosZoneId = zoneId ?? "receipt";
+    const z = posLayout.zones[safeId];
+    const isCompact = safeId === "actions" ? actionsCompact : z.compact;
     return (
       <div
-        onPointerDown={(e) => startZoneDrag(zoneId, e)}
+        onPointerDown={(e) => startZoneDrag(safeId, e)}
         className={cn(
           "flex shrink-0 items-center justify-between gap-1.5 border-b border-line bg-surface-2/80 px-2.5 py-1.5 text-xs",
           !posLayout.locked && "cursor-move select-none",
@@ -2109,9 +2111,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       >
         <div className="flex min-w-0 items-center gap-1.5">
           {!posLayout.locked ? <Move aria-hidden className="size-3.5 shrink-0 text-ink-2" /> : null}
-          <span className="truncate font-bold text-ink">{zoneMeta[zoneId].title}</span>
+          <span className="truncate font-bold text-ink">{zoneMeta[safeId].title}</span>
           <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-ink-2">
-            {zoneMeta[zoneId].badge}
+            {zoneMeta[safeId].badge}
           </span>
           {extraRight}
         </div>
@@ -2120,18 +2122,18 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <button
             type="button"
             disabled={posLayout.locked}
-            onClick={() => cycleZonePosition(zoneId)}
+            onClick={() => cycleZonePosition(safeId)}
             title="تبديل موضع الجزء"
-            aria-label={`تبديل موضع ${zoneMeta[zoneId].title}`}
+            aria-label={`تبديل موضع ${zoneMeta[safeId].title}`}
             className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink disabled:opacity-40"
           >
             <Layers aria-hidden className="size-3.5" />
           </button>
           <button
             type="button"
-            onClick={() => toggleZoneCompact(zoneId)}
+            onClick={() => toggleZoneCompact(safeId)}
             title={isCompact ? "تمديد الجزء" : "تصغير الجزء"}
-            aria-label={isCompact ? `تمديد ${zoneMeta[zoneId].title}` : `تصغير ${zoneMeta[zoneId].title}`}
+            aria-label={isCompact ? `تمديد ${zoneMeta[safeId].title}` : `تصغير ${zoneMeta[safeId].title}`}
             className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink"
           >
             <Minimize2 aria-hidden className="size-3.5" />
@@ -2139,9 +2141,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <button
             type="button"
             disabled={posLayout.locked}
-            onClick={() => minimizeZoneToIcon(zoneId)}
+            onClick={() => minimizeZoneToIcon(safeId)}
             title="إنزال كأيقونة في الصفحة"
-            aria-label={`إنزال ${zoneMeta[zoneId].title} كأيقونة`}
+            aria-label={`إنزال ${zoneMeta[safeId].title} كأيقونة`}
             className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink disabled:opacity-40"
           >
             <X aria-hidden className="size-3.5" />
@@ -2152,12 +2154,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   };
 
   const renderResizeHandle = (zoneId: PosZoneId) => {
+    const safeId: PosZoneId = zoneId ?? "receipt";
     if (posLayout.locked) return null;
     return (
       <div
-        onPointerDown={(e) => startZoneResize(zoneId, e)}
+        onPointerDown={(e) => startZoneResize(safeId, e)}
         title="تمديد حر بالماوس"
-        aria-label={`تمديد ${zoneMeta[zoneId].title}`}
+        aria-label={`تمديد ${zoneMeta[safeId].title}`}
         className="absolute bottom-1 end-1 z-20 flex size-4 cursor-nwse-resize items-end justify-end rounded-sm bg-surface-2/90 p-0.5 text-ink-2 hover:bg-brand hover:text-brand-ink"
       >
         <span className="block size-2 border-b-2 border-e-2 border-current" />
@@ -2166,7 +2169,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   };
 
   const renderZoneCard = (zoneId: PosZoneId) => {
-    const z = posLayout.zones[zoneId];
+    const safeId: PosZoneId = zoneId ?? "receipt";
+    const z = posLayout.zones[safeId];
     if (z.hidden) return null;
 
     const customStyle: React.CSSProperties = {
@@ -2178,7 +2182,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       ...(z.height ? { height: `${z.height}px` } : {}),
     };
 
-    if (zoneId === "receipt") {
+    if (safeId === "receipt") {
       const receiptWidth = z.width ?? leftWidth;
       return (
         <div
@@ -2314,7 +2318,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       );
     }
 
-    if (zoneId === "actions") {
+    if (safeId === "actions") {
       return (
         <div
           key="actions"
