@@ -305,7 +305,7 @@ function QuickPriceModal({
       const trimmed = nameInput.trim();
       await onSubmitPrice({
         price: parsed,
-        customName: trimmed.length > 0 ? trimmed : undefined,
+        customName: trimmed.length > 0 ? trimmed : DEFAULT_NO_BARCODE_NAME,
       });
       onClose();
     } finally {
@@ -780,7 +780,6 @@ function SupermarketCartIcon({
     </svg>
   );
 }
-
 export function SaleScreen({ session, withTables = false }: { session: Session; withTables?: boolean }) {
   const { t } = useTranslation();
   const lang = useLang();
@@ -893,6 +892,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     });
   }, []);
 
+  // Split container is forced to LTR so CartPanel stays on the left and ProductGrid/ScanField stays on the right
   const handleDividerPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
       if (splitPinned) {
@@ -903,17 +903,16 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       setDraggingSplit(true);
       const startX = e.clientX;
       const startWidth = clampLeftWidth(leftWidth);
-      const isRtl = document.dir === "rtl" || window.getComputedStyle(document.body).direction === "rtl";
 
       const onMove = (moveEvent: globalThis.PointerEvent) => {
         const deltaX = moveEvent.clientX - startX;
-        const nextWidth = clampLeftWidth(isRtl ? startWidth - deltaX : startWidth + deltaX);
+        const nextWidth = clampLeftWidth(startWidth + deltaX);
         setLeftWidth(nextWidth);
       };
 
       const onUp = (upEvent: globalThis.PointerEvent) => {
         const deltaX = upEvent.clientX - startX;
-        const finalWidth = clampLeftWidth(isRtl ? startWidth - deltaX : startWidth + deltaX);
+        const finalWidth = clampLeftWidth(startWidth + deltaX);
         setLeftWidth(finalWidth);
         rememberSplitWidth(finalWidth);
         setDraggingSplit(false);
@@ -1021,20 +1020,26 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [askSerials, lang, modules, notify, t],
   );
 
-  // Quick price: uses exact entered price without extra scaling or fallback 1.00 override
+  // Quick price / manual item: exact price * 1 qty (no x10 multiplier) and non-empty name/description
   const handleQuickPriceSubmit = useCallback(
     async ({ price, customName }: { price: number; customName?: string }) => {
-      const scaledPrice = Math.round(price * 1_000);
-      const finalName = customName || DEFAULT_NO_BARCODE_NAME;
+      const normalizedPrice = Number(price);
+      if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) {
+        toast.error("أدخل سعراً صحيحاً أكبر من صفر");
+        return;
+      }
+      const scaledPrice = Math.round(normalizedPrice * 1_000);
+      const finalName = (customName ?? "").trim() || DEFAULT_NO_BARCODE_NAME;
 
-      if (!customName) {
+      if (!customName || customName.trim().length === 0) {
         try {
           const hit = await findByCode.mutateAsync(NO_BARCODE_LOOKUP_CODE);
           if (hit) {
+            const hitName = localizedName(hit.product, lang).trim() || DEFAULT_NO_BARCODE_NAME;
             useCart.getState().addLine(
               {
                 productId: hit.product.id,
-                description: null,
+                description: hitName,
                 qty: 1_000,
                 unitPrice: scaledPrice,
                 discount: { kind: "none" },
@@ -1043,11 +1048,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                 expectedUnitPrice: scaledPrice,
               },
               {
-                name: localizedName(hit.product, lang) || DEFAULT_NO_BARCODE_NAME,
-                unitCode: hit.product.unitCode,
+                name: hitName,
+                unitCode: hit.product.unitCode || "PCS",
                 unitDecimals: unitDecimalsOf(hit.product, units),
                 price: scaledPrice,
-                latinName: hit.product.nameFr.trim() || hit.product.nameEn.trim() || DEFAULT_NO_BARCODE_NAME,
+                latinName: hit.product.nameFr.trim() || hit.product.nameEn.trim() || hitName,
               },
             );
             beep("ok");
@@ -1111,7 +1116,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [addProduct, errorText, findByCode],
   );
 
-  // Merge weighed items of the same product into one row in cart
   const addHit = useCallback(
     (hit: ScanHit) => {
       addProduct(hit.product, hit.packQty, unitDecimalsOf(hit.product, units), false);
@@ -1495,7 +1499,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         body={t("pos:closed.body")}
         action={
           <div className="flex gap-2">
-                        {can("cash.open") ? (
+            {can("cash.open") ? (
               <Button variant="primary" size="lg" onClick={() => setDialog({ kind: "openSession" })}>
                 <Wallet aria-hidden />
                 {t("pos:closed.open")}
@@ -1617,7 +1621,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       </Button>
     </div>
   );
-
   const heldCount = held.data?.length ?? 0;
 
   return (
@@ -1639,12 +1642,16 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       {closed ? (
         closedView
       ) : (
-        <div ref={splitContainerRef} className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
-          {/* Standard theme splitter bar + non-red pin highlight */}
+        <div
+          ref={splitContainerRef}
+          dir="ltr"
+          className="relative flex min-h-0 flex-1 flex-row overflow-hidden"
+        >
+          {/* Splitter bar positioned at leftWidth from the left edge */}
           <div
-            style={{ insetInlineStart: `${leftWidth}px` }}
+            style={{ left: `${leftWidth}px` }}
             className={cn(
-              "pointer-events-auto fixed inset-y-0 z-30 flex w-2.5 -translate-x-1/2 flex-col items-center border-x border-line bg-surface-2/50 transition-colors rtl:translate-x-1/2",
+              "pointer-events-auto fixed inset-y-0 z-30 flex w-2.5 -translate-x-1/2 flex-col items-center border-x border-line bg-surface-2/50 transition-colors",
               !splitPinned && "cursor-col-resize hover:bg-surface-2",
               draggingSplit && "bg-surface-2",
             )}
@@ -1668,7 +1675,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             </button>
           </div>
 
-          <div style={{ width: `${leftWidth}px` }} className="flex min-h-0 shrink-0">
+          {/* Receipt panel on the left */}
+          <div dir="rtl" style={{ width: `${leftWidth}px` }} className="flex min-h-0 shrink-0">
             <CartPanel
               className="w-full"
               lines={lines}
@@ -1782,7 +1790,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             />
           </div>
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4">
+          {/* ScanField & ProductGrid on the right */}
+          <main dir="rtl" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4">
             <ScanField
               inputRef={scanRef}
               value={text}
@@ -1951,4 +1960,3 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     </div>
   );
 }
-
