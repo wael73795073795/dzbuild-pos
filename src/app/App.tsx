@@ -24,12 +24,16 @@ import { HostCloseGuard } from "./HostCloseGuard";
 import { AppRoutes } from "./routes";
 import { StartupNotices } from "./StartupNotices";
 
+// Off the till's route (NFR-010, finding 28): the first-run wizard and the fatal screen are chunks
+// of their own, read when they show. The wizard's activity templates and scale step speak the
+// packs' texts, which are the back office's: it waits for them.
 const SetupWizard = lazy(() =>
   Promise.all([import("@/features/setup/SetupWizard"), loadBackOffice()]).then(([m]) => ({
     default: m.SetupWizard,
   })),
 );
 const FatalScreen = lazy(() => import("./FatalScreen").then((m) => ({ default: m.FatalScreen })));
+// M9: a chunk of its own too, read only on a new install without a licence.
 const ActivationScreen = lazy(() =>
   Promise.all([import("@/features/license/ActivationScreen"), loadBackOffice()]).then(([m]) => ({
     default: m.ActivationScreen,
@@ -116,6 +120,7 @@ function findMatchingDomElement(target: string, label: string): HTMLElement | nu
 
   return null;
 }
+
 /** Runs user-defined custom shortcuts globally with exact target matching. */
 function CustomShortcutsRunner() {
   const navigate = useNavigate();
@@ -188,6 +193,81 @@ function CustomShortcutsRunner() {
   }, [navigate, shortcuts]);
 
   return null;
+}
+
+export function App() {
+  const [client] = useState(createQueryClient);
+  return (
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <Suspense fallback={<Splash />}>
+          <Root />
+        </Suspense>
+        <StartupNotices />
+        <HostCloseGuard />
+        <ClosingOverlay />
+        <AppToaster />
+        <OnScreenKeyboard />
+      </I18nextProvider>
+    </QueryClientProvider>
+  );
+}
+
+/** Toasts at the bottom-end corner, 4 s (spec §10.4). They stay pressable while a modal dialog
+ * holds the page (a failed receipt's "Réimprimer" arrives under the sale-done dialog). */
+function AppToaster() {
+  const rtl = useLang() === "ar";
+  return (
+    <Toaster
+      dir={rtl ? "rtl" : "ltr"}
+      position={rtl ? "bottom-left" : "bottom-right"}
+      duration={4_000}
+      className="pointer-events-auto"
+      style={{ pointerEvents: "auto" }}
+    />
+  );
+}
+
+function Root() {
+  const startup = useStartupError();
+  const ready = startup.isSuccess && startup.data === null;
+  const setup = useSetupStatus(ready);
+  // M9: a new install without a valid licence opens on the activation screen. The webview
+  // is not the boundary: a failed status call leaves the app as it was.
+  const license = useLicenseStatus(ready);
+  const session = useSession(setup.data?.completed === true);
+  const theme = useThemePreference(ready);
+  useEffect(() => applyTheme(theme), [theme]);
+  // This PC's light mode and text size, from the first paint on (the login and the wizard too).
+  useApplyDisplay();
+  // NFR-003: the cold start ends when the activation, setup, login or sale screen is up.
+  useAppReady(
+    ready && setup.isSuccess && (setup.data.completed ? session.isSuccess : !license.isPending),
+  );
+
+  if (startup.isPending) return <Splash />;
+  if (startup.isError) {
+    return <FatalScreen failure={{ error: toAppError(startup.error), dataDir: "" }} />;
+  }
+  if (startup.data) return <FatalScreen failure={startup.data} />;
+  if (setup.isPending) return <Splash />;
+  if (setup.isError) {
+    return <FatalScreen failure={{ error: toAppError(setup.error), dataDir: "" }} />;
+  }
+  if (!setup.data.completed) {
+    if (license.isPending) return <Splash />;
+    if (license.data && !license.data.canWrite) return <ActivationScreen status={license.data} />;
+    return <SetupWizard />;
+  }
+  if (session.isPending) return <Splash />;
+  if (!session.data) return <LoginScreen />;
+  return (
+    <MemoryRouter>
+      <CustomShortcutsRunner />
+      {import.meta.env.VITE_E2E === "1" ? <E2eNavigator /> : null}
+      <AppRoutes session={session.data} />
+    </MemoryRouter>
+  );
 }
 
 /** E2E only (`VITE_E2E=1`): the specs move the in-memory router without a reload, which would
