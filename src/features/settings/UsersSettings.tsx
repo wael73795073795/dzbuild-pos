@@ -62,31 +62,45 @@ const BARCODE_DIGIT_PATTERNS: Record<string, string> = {
   "9": "11211122",
 };
 
-function buildBarcodeBars(code: string): { widthPx: number; dark: boolean }[] {
-  const bars: { widthPx: number; dark: boolean }[] = [
-    { widthPx: 3, dark: true },
-    { widthPx: 3, dark: false },
-    { widthPx: 3, dark: true },
+interface BarcodeBar {
+  x: number;
+  width: number;
+  dark: boolean;
+}
+
+function buildBarcodeGeometry(code: string): { bars: BarcodeBar[]; totalWidth: number; height: number } {
+  const height = 112;
+  const rawBars: { width: number; dark: boolean }[] = [
+    { width: 3, dark: true },
+    { width: 3, dark: false },
+    { width: 3, dark: true },
   ];
 
   for (const ch of code) {
     const pattern = BARCODE_DIGIT_PATTERNS[ch] ?? BARCODE_DIGIT_PATTERNS["0"] ?? "11121211";
     for (let i = 0; i < pattern.length; i += 1) {
       const units = Number(pattern[i] ?? "1") || 1;
-      bars.push({
-        widthPx: units * 2,
+      rawBars.push({
+        width: units * 2,
         dark: i % 2 === 0,
       });
     }
   }
 
-  bars.push(
-    { widthPx: 3, dark: true },
-    { widthPx: 3, dark: false },
-    { widthPx: 3, dark: true },
+  rawBars.push(
+    { width: 3, dark: true },
+    { width: 3, dark: false },
+    { width: 3, dark: true },
   );
 
-  return bars;
+  let cursorX = 0;
+  const bars: BarcodeBar[] = rawBars.map((b) => {
+    const item = { x: cursorX, width: b.width, dark: b.dark };
+    cursorX += b.width;
+    return item;
+  });
+
+  return { bars, totalWidth: cursorX, height };
 }
 
 function generateNumericOwnerBarcode(length = 16): string {
@@ -166,26 +180,45 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function buildBarcodeSvgMarkup(code: string): string {
+  const { bars, totalWidth, height } = buildBarcodeGeometry(code);
+  const rects = bars
+    .map(
+      (bar) =>
+        `<rect x="${bar.x}" y="0" width="${bar.width}" height="${height}" fill="${
+          bar.dark ? "#000000" : "#ffffff"
+        }" />`,
+    )
+    .join("");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalWidth} ${height}" width="${totalWidth}" height="${height}" style="display:block;max-width:100%;height:112px;background:#ffffff;" role="img" aria-label="Owner barcode ${escapeHtml(
+    code,
+  )}"><rect x="0" y="0" width="${totalWidth}" height="${height}" fill="#ffffff" />${rects}</svg>`;
+}
+
 function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: boolean }) {
-  const bars = buildBarcodeBars(code);
+  const { bars, totalWidth, height } = buildBarcodeGeometry(code);
 
   return (
     <div className="flex flex-col items-center gap-3 rounded-card border border-line bg-white px-6 py-5 text-black">
-      <div
+      <svg
+        viewBox={`0 0 ${totalWidth} ${height}`}
+        className="h-28 w-auto max-w-full bg-white"
+        role="img"
         aria-label={showDigits ? `Owner barcode ${code}` : "Owner barcode"}
-        className="flex h-28 items-stretch justify-center overflow-hidden"
       >
+        <rect x="0" y="0" width={totalWidth} height={height} fill="#ffffff" />
         {bars.map((bar, idx) => (
-          <span
+          <rect
             key={idx}
-            style={{
-              width: `${bar.widthPx}px`,
-              backgroundColor: bar.dark ? "#000000" : "#ffffff",
-            }}
-            className="inline-block h-full shrink-0"
+            x={bar.x}
+            y={0}
+            width={bar.width}
+            height={height}
+            fill={bar.dark ? "#000000" : "#ffffff"}
           />
         ))}
-      </div>
+      </svg>
       {showDigits ? (
         <div dir="ltr" className="select-all font-mono text-lg font-bold tracking-[0.25em] text-black">
           {code}
@@ -227,17 +260,7 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
   };
 
   const openPrintPreviewWindow = (mode: "print" | "pdf") => {
-    const bars = buildBarcodeBars(barcode);
-    const totalWidthPx = bars.reduce((sum, b) => sum + b.widthPx, 0);
-    const barsHtml = bars
-      .map(
-        (bar) =>
-          `<span style="display:inline-block;width:${bar.widthPx}px;height:112px;background:${
-            bar.dark ? "#000000" : "#ffffff"
-          };flex-shrink:0;"></span>`,
-      )
-      .join("");
-
+    const svgMarkup = buildBarcodeSvgMarkup(barcode);
     const digitsHtml = showDigits
       ? `<div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:5px;margin-top:12px;direction:ltr;color:#000000;">${escapeHtml(
           barcode,
@@ -259,12 +282,14 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
-      body {
-        font-family: Tahoma, Arial, sans-serif;
+      html, body {
+        width: 100%;
+        min-height: 100%;
         margin: 0;
         padding: 20px;
-        background: #f4f5f7;
+        background: #ffffff;
         color: #111111;
+        font-family: Tahoma, Arial, sans-serif;
       }
       .toolbar {
         max-width: 640px;
@@ -273,14 +298,14 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        background: #ffffff;
+        background: #f9fafb;
         border: 1px solid #d4d7dd;
         border-radius: 10px;
         padding: 10px 14px;
       }
       .toolbar-hint {
         font-size: 13px;
-        color: #374151;
+        color: #1f2937;
       }
       .toolbar-actions {
         display: flex;
@@ -321,7 +346,7 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
       }
       .subtitle {
         font-size: 13px;
-        color: #4b5563;
+        color: #374151;
         margin-bottom: 18px;
       }
       .barcode-box {
@@ -330,33 +355,23 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
         align-items: center;
         justify-content: center;
         background: #ffffff;
-        border: 1px solid #e5e7eb;
+        border: 1px solid #d1d5db;
         border-radius: 10px;
         padding: 18px 22px;
       }
-      .bars-row {
-        display: flex;
-        align-items: stretch;
-        justify-content: center;
-        height: 112px;
-        width: ${totalWidthPx}px;
-        max-width: 100%;
-        overflow: hidden;
-        background: #ffffff;
-      }
       @media print {
-        body {
-          background: #ffffff;
-          padding: 0;
+        html, body {
+          background: #ffffff !important;
+          padding: 0 !important;
         }
         .toolbar {
           display: none !important;
         }
         .sheet {
-          border: none;
-          border-radius: 0;
-          padding: 12px;
-          max-width: 100%;
+          border: none !important;
+          border-radius: 0 !important;
+          padding: 12px !important;
+          max-width: 100% !important;
         }
       }
     </style>
@@ -366,8 +381,8 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
       <div class="toolbar-hint">
         ${
           mode === "pdf"
-            ? "معاينة الحفظ كـ PDF — اختر (Save as PDF / حفظ كـ PDF) من نافذة الطباعة."
-            : "معاينة الطباعة — تأكد من ظهور الباركود ثم اضغط طباعة."
+            ? "معاينة الحفظ كـ PDF — اختر (Save as PDF / حفظ كـ PDF) ثم اضغط حفظ."
+            : "معاينة الطباعة — الباركود جاهز للطباعة أو الحفظ كـ PDF."
         }
       </div>
       <div class="toolbar-actions">
@@ -381,15 +396,17 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
       <div class="title">باركود صلاحية المالك</div>
       <div class="subtitle">للموافقة لمرة واحدة على العملية الحالية فقط</div>
       <div class="barcode-box">
-        <div class="bars-row">${barsHtml}</div>
+        ${svgMarkup}
         ${digitsHtml}
       </div>
     </div>
     <script>
       window.addEventListener("load", function () {
         setTimeout(function () {
-          window.print();
-        }, 120);
+          try {
+            window.print();
+          } catch (_) {}
+        }, 250);
       });
     </script>
   </body>
@@ -404,6 +421,7 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
+    printWindow.focus();
   };
 
   return (
