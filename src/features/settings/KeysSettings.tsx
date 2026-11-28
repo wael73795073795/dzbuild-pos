@@ -2,13 +2,22 @@ import {
   Check,
   Crosshair,
   Keyboard,
+  Move,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Power,
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,7 +32,9 @@ import {
   hotkeyOf,
   isTillKey,
   readCustomKeyMap,
+  readDisabledKeys,
   writeCustomKeyMap,
+  writeDisabledKeys,
 } from "@/lib/key-map";
 import { useErrorText } from "@/lib/use-error-text";
 import { cn } from "@/lib/utils";
@@ -47,6 +58,9 @@ interface PickedTargetInfo {
 
 const CUSTOM_SHORTCUTS_STORAGE_KEY = "dzpos.custom.shortcuts.v1";
 const CUSTOM_SHORTCUTS_EVENT = "dzpos:custom-shortcuts-updated";
+const PICKER_ACTIVE_STORAGE_KEY = "dzpos.picker.active.v1";
+const PICKER_PAUSED_STORAGE_KEY = "dzpos.picker.paused.v1";
+const PICKER_STATE_EVENT = "dzpos:picker-state-updated";
 
 const ACTIONS = Object.keys(DEFAULT_KEYS) as TillAction[];
 
@@ -56,6 +70,30 @@ function isAction(value: string): value is TillAction {
 
 function isValidShortcut(value: string): value is Hotkey {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function readPickerState(): { open: boolean; paused: boolean } {
+  try {
+    return {
+      open: window.localStorage.getItem(PICKER_ACTIVE_STORAGE_KEY) === "1",
+      paused: window.localStorage.getItem(PICKER_PAUSED_STORAGE_KEY) === "1",
+    };
+  } catch {
+    return { open: false, paused: false };
+  }
+}
+
+function writePickerState(next: { open?: boolean; paused?: boolean }): void {
+  try {
+    const current = readPickerState();
+    const open = next.open ?? current.open;
+    const paused = next.paused ?? current.paused;
+    window.localStorage.setItem(PICKER_ACTIVE_STORAGE_KEY, open ? "1" : "0");
+    window.localStorage.setItem(PICKER_PAUSED_STORAGE_KEY, paused ? "1" : "0");
+    window.dispatchEvent(new CustomEvent(PICKER_STATE_EVENT, { detail: { open, paused } }));
+  } catch {
+    // تجاهل أخطاء التخزين المحلي
+  }
 }
 
 function loadCustomShortcuts(): CustomShortcutEntry[] {
@@ -102,7 +140,7 @@ function saveCustomShortcuts(items: CustomShortcutEntry[]): void {
     window.localStorage.setItem(CUSTOM_SHORTCUTS_STORAGE_KEY, JSON.stringify(items));
     window.dispatchEvent(new CustomEvent(CUSTOM_SHORTCUTS_EVENT, { detail: items }));
   } catch {
-    // ignore storage errors
+    // تجاهل أخطاء التخزين المحلي
   }
 }
 
@@ -147,13 +185,17 @@ function describeElementTarget(el: HTMLElement): PickedTargetInfo {
   };
 }
 
-function ElementPagePickerOverlay({
+export function ElementPagePickerOverlay({
   open,
-  onCancel,
+  paused,
+  onTogglePause,
+  onClose,
   onPick,
 }: {
   open: boolean;
-  onCancel: () => void;
+  paused: boolean;
+  onTogglePause: () => void;
+  onClose: () => void;
   onPick: (picked: PickedTargetInfo) => void;
 }) {
   const [hoverRect, setHoverRect] = useState<{
@@ -163,6 +205,42 @@ function ElementPagePickerOverlay({
     height: number;
     label: string;
   } | null>(null);
+
+  const [offset, setOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [draggingBar, setDraggingBar] = useState(false);
+
+  const startBarDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if ((event.target as HTMLElement).closest("button")) return;
+      event.preventDefault();
+      setDraggingBar(true);
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const baseX = offset.x;
+      const baseY = offset.y;
+
+      const onMove = (moveEvent: globalThis.PointerEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        const maxX = Math.max(400, window.innerWidth);
+        const maxY = Math.max(300, window.innerHeight);
+        setOffset({
+          x: Math.max(-maxX, Math.min(maxX, baseX + dx)),
+          y: Math.max(-maxY, Math.min(maxY, baseY + dy)),
+        });
+      };
+
+      const onUp = () => {
+        setDraggingBar(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [offset.x, offset.y],
+  );
 
   const pickCurrentPage = useCallback(() => {
     const path = window.location.pathname || "/";
@@ -175,7 +253,7 @@ function ElementPagePickerOverlay({
   }, [onPick]);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || paused) {
       setHoverRect(null);
       return;
     }
@@ -223,29 +301,19 @@ function ElementPagePickerOverlay({
       onPick(describeElementTarget(interactive));
     };
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onCancel();
-      }
-    };
-
     window.addEventListener("mousemove", onMouseMove, true);
     window.addEventListener("click", onClickCapture, true);
-    window.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("mousemove", onMouseMove, true);
       window.removeEventListener("click", onClickCapture, true);
-      window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [onCancel, onPick, open]);
+  }, [onPick, open, paused]);
 
   if (!open) return null;
 
   return (
     <div data-picker-overlay="true" className="fixed inset-0 z-50 pointer-events-none">
-      {hoverRect ? (
+      {!paused && hoverRect ? (
         <div
           style={{
             top: `${hoverRect.top}px`,
@@ -261,17 +329,58 @@ function ElementPagePickerOverlay({
         </div>
       ) : null}
 
-      <div className="pointer-events-auto fixed bottom-5 inset-x-0 z-50 mx-auto flex w-fit max-w-[95vw] flex-wrap items-center justify-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-ink shadow-2xl">
+      <div
+        onPointerDown={startBarDrag}
+        style={{
+          transform:
+            offset.x !== 0 || offset.y !== 0
+              ? `translate3d(${offset.x}px, ${offset.y}px, 0)`
+              : undefined,
+        }}
+        className={cn(
+          "pointer-events-auto fixed bottom-5 inset-x-0 z-50 mx-auto flex w-fit max-w-[95vw] flex-wrap items-center justify-center gap-2.5 rounded-2xl border border-line bg-surface px-4 py-3 text-ink shadow-2xl select-none",
+          draggingBar ? "cursor-grabbing ring-2 ring-brand" : "cursor-grab",
+        )}
+      >
         <div className="flex items-center gap-2 text-sm font-bold">
-          <Crosshair aria-hidden className="size-4 text-brand animate-pulse" />
-          <span>الملقاط نشط: أشر واضغط على أي عنصر أو اختر الصفحة الحالية</span>
+          <Move aria-hidden className="size-4 text-ink-2" />
+          <Crosshair
+            aria-hidden
+            className={cn("size-4", paused ? "text-amber-500" : "text-brand animate-pulse")}
+          />
+          <span>
+            {paused
+              ? "الملقاط في وضع إيقاف مؤقت: تنقل أو انزل تحت براحتك ثم اضغط تشغيل للالتقاط"
+              : "الملقاط يعمل الآن: اضغط على العنصر المطلوب أو التقط الصفحة الحالية"}
+          </span>
         </div>
+
+        <Button
+          type="button"
+          variant={paused ? "primary" : "secondary"}
+          size="md"
+          onClick={onTogglePause}
+        >
+          {paused ? (
+            <>
+              <Play aria-hidden className="size-4" />
+              تشغيل الالتقاط
+            </>
+          ) : (
+            <>
+              <Pause aria-hidden className="size-4" />
+              إيقاف مؤقت
+            </>
+          )}
+        </Button>
+
         <Button type="button" variant="primary" size="md" onClick={pickCurrentPage}>
           التقاط الصفحة الحالية
         </Button>
-        <Button type="button" variant="outline" size="md" onClick={onCancel}>
+
+        <Button type="button" variant="outline" size="md" onClick={onClose}>
           <X aria-hidden className="size-4" />
-          إلغاء (Esc)
+          إغلاق
         </Button>
       </div>
     </div>
@@ -286,12 +395,17 @@ export function KeysSettings() {
   const till = useTillLink();
 
   const [draft, setDraft] = useState<Partial<KeyMap>>({});
+  const [disabledActions, setDisabledActions] = useState<Partial<Record<TillAction, boolean>>>(() =>
+    readDisabledKeys(),
+  );
   const [capturing, setCapturing] = useState<TillAction | null>(null);
   const [capturingCustomId, setCapturingCustomId] = useState<string | null>(null);
   const [capturingComposerKey, setCapturingComposerKey] = useState(false);
   const [taken, setTaken] = useState<{ key: string; name: string } | null>(null);
 
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerState, setPickerState] = useState<{ open: boolean; paused: boolean }>(() =>
+    readPickerState(),
+  );
   const [customShortcuts, setCustomShortcuts] = useState<CustomShortcutEntry[]>(() =>
     loadCustomShortcuts(),
   );
@@ -302,20 +416,36 @@ export function KeysSettings() {
   const [targetKind, setTargetKind] = useState<"element" | "page" | "action">("element");
   const [shortcutInput, setShortcutInput] = useState<string>("Alt+S");
 
+  const updatePicker = useCallback((next: { open?: boolean; paused?: boolean }) => {
+    writePickerState(next);
+    setPickerState(readPickerState());
+  }, []);
+
+  useEffect(() => {
+    const syncPicker = () => setPickerState(readPickerState());
+    window.addEventListener(PICKER_STATE_EVENT, syncPicker);
+    window.addEventListener("storage", syncPicker);
+    return () => {
+      window.removeEventListener(PICKER_STATE_EVENT, syncPicker);
+      window.removeEventListener("storage", syncPicker);
+    };
+  }, []);
+
   const current = useMemo(() => {
     const map: KeyMap = { ...DEFAULT_KEYS };
     for (const [action, key] of stored.data ?? []) {
-      if (isAction(action) && isTillKey(key)) map[action] = key;
+      if (isAction(action) && isTillKey(key)) map[action] = key.trim();
     }
     const localCustom = readCustomKeyMap();
     for (const [action, key] of Object.entries(localCustom)) {
-      if (isAction(action) && key && isTillKey(key)) map[action] = key;
+      if (isAction(action) && key && isTillKey(key)) map[action] = key.trim();
     }
     return map;
   }, [stored.data]);
 
   const keys = useMemo<KeyMap>(() => ({ ...current, ...draft }), [current, draft]);
-  const labelOfKey = (key: string) => (key === "Escape" ? t("common:keys.escape") : key);
+  const labelOfKey = (key: string) =>
+    !key ? "متوقف" : key === "Escape" ? t("common:keys.escape") : key;
   const actionName = (action: TillAction) =>
     t(`config:keys.actions.${action}`, { defaultValue: action });
 
@@ -325,8 +455,12 @@ export function KeysSettings() {
     ignoreCustomId?: string,
   ): string | null => {
     const normalized = candidateKey.trim().toLowerCase();
+    if (!normalized) return null;
     const builtInConflict = ACTIONS.find(
-      (a) => a !== ignoreBuiltIn && keys[a].toLowerCase() === normalized,
+      (a) =>
+        a !== ignoreBuiltIn &&
+        !disabledActions[a] &&
+        keys[a].trim().toLowerCase() === normalized,
     );
     if (builtInConflict) return actionName(builtInConflict);
 
@@ -408,6 +542,7 @@ export function KeysSettings() {
     capturingCustomId,
     current,
     customShortcuts,
+    disabledActions,
     editingId,
     keys,
   ]);
@@ -416,11 +551,22 @@ export function KeysSettings() {
   const anyCapturing =
     capturing !== null || capturingCustomId !== null || capturingComposerKey;
 
+  const toggleBuiltInAction = (action: TillAction) => {
+    setDisabledActions((prev) => {
+      const next = { ...prev, [action]: !prev[action] };
+      writeDisabledKeys(next);
+      toast.success(next[action] ? "تم إيقاف الاختصار مؤقتاً" : "تم تفعيل الاختصار");
+      return next;
+    });
+  };
+
   const send = (map: Record<string, string>, done: string) =>
     save.mutate(map, {
       onSuccess: () => {
         if (Object.keys(map).length === 0) {
           writeCustomKeyMap({ ...DEFAULT_KEYS });
+          setDisabledActions({});
+          writeDisabledKeys({});
         } else {
           writeCustomKeyMap(keys);
         }
@@ -433,15 +579,18 @@ export function KeysSettings() {
       },
     });
 
-  const handlePickedTarget = useCallback((picked: PickedTargetInfo) => {
-    setPickerOpen(false);
-    setEditingId(null);
-    setTargetInput(picked.target);
-    setTargetKind(picked.targetKind);
-    setLabelInput(picked.label);
-    setTaken(null);
-    toast.success(`تم التقاط: ${picked.label}`);
-  }, []);
+  const handlePickedTarget = useCallback(
+    (picked: PickedTargetInfo) => {
+      updatePicker({ open: false, paused: false });
+      setEditingId(null);
+      setTargetInput(picked.target);
+      setTargetKind(picked.targetKind);
+      setLabelInput(picked.label);
+      setTaken(null);
+      toast.success(`تم التقاط: ${picked.label}`);
+    },
+    [updatePicker],
+  );
 
   const resetComposer = () => {
     setEditingId(null);
@@ -545,8 +694,10 @@ export function KeysSettings() {
   return (
     <>
       <ElementPagePickerOverlay
-        open={pickerOpen}
-        onCancel={() => setPickerOpen(false)}
+        open={pickerState.open}
+        paused={pickerState.paused}
+        onTogglePause={() => updatePicker({ paused: !pickerState.paused })}
+        onClose={() => updatePicker({ open: false, paused: false })}
         onPick={handlePickedTarget}
       />
 
@@ -572,97 +723,140 @@ export function KeysSettings() {
               <th scope="col" className="text-start font-semibold">
                 {t("config:keys.key")}
               </th>
+              <th scope="col" className="text-start font-semibold">
+                الحالة
+              </th>
               <th scope="col">
                 <span className="sr-only">{t("config:keys.change")}</span>
               </th>
             </tr>
           </thead>
           <tbody>
-            {ACTIONS.map((action) => (
-              <tr
-                key={action}
-                className={cn(
-                  "h-12 border-t border-line",
-                  capturing === action ? "bg-brand-soft" : "even:bg-surface-2",
-                )}
-              >
-                <th scope="row" className="text-start font-semibold">
-                  {actionName(action)}
-                </th>
-                <td>
-                  {capturing === action ? (
-                    <span role="status" className="text-ink-2">
-                      {t("config:keys.press")}
-                    </span>
-                  ) : (
-                    <kbd
-                      dir="ltr"
+            {ACTIONS.map((action) => {
+              const isOff = Boolean(disabledActions[action]);
+              return (
+                <tr
+                  key={action}
+                  className={cn(
+                    "h-12 border-t border-line",
+                    capturing === action ? "bg-brand-soft" : "even:bg-surface-2",
+                    isOff && "opacity-65",
+                  )}
+                >
+                  <th scope="row" className="text-start font-semibold">
+                    {actionName(action)}
+                  </th>
+                  <td>
+                    {capturing === action ? (
+                      <span role="status" className="text-ink-2">
+                        {t("config:keys.press")}
+                      </span>
+                    ) : (
+                      <kbd
+                        dir="ltr"
+                        className={cn(
+                          "rounded-sm border border-line bg-surface px-2 py-1 font-semibold tabular-nums",
+                          keys[action] !== current[action] && "border-brand",
+                        )}
+                      >
+                        {labelOfKey(keys[action])}
+                      </kbd>
+                    )}
+                  </td>
+                  <td>
+                    <span
                       className={cn(
-                        "rounded-sm border border-line bg-surface px-2 py-1 font-semibold tabular-nums",
-                        keys[action] !== current[action] && "border-brand",
+                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold",
+                        isOff ? "bg-danger-soft text-danger" : "bg-emerald-500/15 text-emerald-600",
                       )}
                     >
-                      {labelOfKey(keys[action])}
-                    </kbd>
-                  )}
-                </td>
-                <td className="text-end">
-                  {till.isTill ? null : capturing === action ? (
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setCapturing(null);
-                        setTaken(null);
-                      }}
-                    >
-                      {t("common:actions.cancel")}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      aria-label={t("config:keys.changeFor", { action: actionName(action) })}
-                      onClick={() => {
-                        setTaken(null);
-                        setCapturingCustomId(null);
-                        setCapturingComposerKey(false);
-                        setCapturing(action);
-                      }}
-                    >
-                      <Keyboard aria-hidden />
-                      {t("config:keys.change")}
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                      <span
+                        className={cn(
+                          "size-2 rounded-full",
+                          isOff ? "bg-danger" : "bg-emerald-500",
+                        )}
+                      />
+                      {isOff ? "متوقف" : "مفعّل"}
+                    </span>
+                  </td>
+                  <td className="text-end">
+                    <div className="inline-flex items-center justify-end gap-1.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={isOff ? "تفعيل الاختصار" : "إيقاف الاختصار"}
+                        aria-label={isOff ? "تفعيل الاختصار" : "إيقاف الاختصار"}
+                        onClick={() => toggleBuiltInAction(action)}
+                      >
+                        <Power
+                          aria-hidden
+                          className={cn("size-4", isOff ? "text-ink-2" : "text-emerald-600")}
+                        />
+                      </Button>
+                      {till.isTill ? null : capturing === action ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setCapturing(null);
+                            setTaken(null);
+                          }}
+                        >
+                          {t("common:actions.cancel")}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          aria-label={t("config:keys.changeFor", { action: actionName(action) })}
+                          onClick={() => {
+                            setTaken(null);
+                            setCapturingCustomId(null);
+                            setCapturingComposerKey(false);
+                            setCapturing(action);
+                          }}
+                        >
+                          <Keyboard aria-hidden />
+                          {t("config:keys.change")}
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
-        {/* Bottom professional custom shortcuts & element/page picker section */}
         <div className="mt-4 rounded-xl border border-line bg-surface-2/60 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-base font-bold text-ink">
-                {editingId ? "تعديل اختصار مخصص" : "مُركّب الاختصارات الحر وملقاط العناصر والصفحات"}
+                {editingId
+                  ? "تعديل اختصار مخصص"
+                  : "مُركّب الاختصارات الحر وملقاط العناصر والصفحات"}
               </h3>
               <p className="text-xs text-ink-2">
-                استخدم الملقاط لالتقاط أي زر أو صفحة مباشرة، أو اكتب الهدف واسجل أي اختصار (`Ctrl` / `Alt` / `Shift` / مفاتيح) مع تعديله أو حذفه فوراً.
+                افتح الملقاط، ثم أوقفه مؤقتاً أثناء التنقل أو النزول للأسفل، وشغّله وقت الالتقاط ثم أغلقه متى شئت.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                variant="secondary"
+                variant={pickerState.open ? "primary" : "secondary"}
                 onClick={() => {
                   setTaken(null);
                   setCapturing(null);
                   setCapturingCustomId(null);
                   setCapturingComposerKey(false);
-                  setPickerOpen(true);
+                  if (!pickerState.open) {
+                    updatePicker({ open: true, paused: false });
+                  } else {
+                    updatePicker({ open: false, paused: false });
+                  }
                 }}
               >
-                <Crosshair aria-hidden className="size-4 text-brand" />
-                ملقاط عنصر / صفحة
+                <Crosshair aria-hidden className="size-4" />
+                {pickerState.open ? "إغلاق الملقاط" : "ملقاط عنصر / صفحة"}
               </Button>
               {editingId ? (
                 <Button type="button" variant="ghost" size="md" onClick={resetComposer}>
@@ -700,7 +894,7 @@ export function KeysSettings() {
             </label>
 
             <div className="flex flex-col gap-1 text-xs font-semibold sm:col-span-3">
-              <span>مفتاح / تركيبة الاختصار</span>
+              <span>مفتاح أو تركيبة الاختصار</span>
               {capturingComposerKey ? (
                 <Button
                   type="button"
@@ -720,7 +914,7 @@ export function KeysSettings() {
                       setTaken(null);
                       setShortcutInput(e.target.value);
                     }}
-                    placeholder="Ctrl+Shift+K"
+                    placeholder="Alt+S"
                     className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 text-sm font-semibold text-ink focus:border-brand focus:outline-none"
                   />
                   <Button
@@ -728,8 +922,8 @@ export function KeysSettings() {
                     variant="secondary"
                     size="icon"
                     className="h-10 w-10 shrink-0"
-                    title="التقاط ضغطة من الكيبورد"
-                    aria-label="التقاط ضغطة من الكيبورد"
+                    title="التقاط ضغطة من لوحة المفاتيح"
+                    aria-label="التقاط ضغطة من لوحة المفاتيح"
                     onClick={() => {
                       setTaken(null);
                       setCapturing(null);
@@ -773,6 +967,7 @@ export function KeysSettings() {
                     <th className="px-3 text-start font-semibold">الاختصار / العنصر</th>
                     <th className="px-3 text-start font-semibold">الهدف</th>
                     <th className="px-3 text-start font-semibold">المفتاح</th>
+                    <th className="px-3 text-start font-semibold">الحالة</th>
                     <th className="px-3 text-end font-semibold">تحكم</th>
                   </tr>
                 </thead>
@@ -804,6 +999,24 @@ export function KeysSettings() {
                           </kbd>
                         )}
                       </td>
+                      <td className="px-3">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold",
+                            item.enabled
+                              ? "bg-emerald-500/15 text-emerald-600"
+                              : "bg-danger-soft text-danger",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "size-2 rounded-full",
+                              item.enabled ? "bg-emerald-500" : "bg-danger",
+                            )}
+                          />
+                          {item.enabled ? "مفعّل" : "متوقف"}
+                        </span>
+                      </td>
                       <td className="px-3 text-end">
                         <div className="inline-flex items-center justify-end gap-1">
                           <Button
@@ -816,7 +1029,10 @@ export function KeysSettings() {
                           >
                             <Power
                               aria-hidden
-                              className={cn("size-4", item.enabled ? "text-ok" : "text-ink-2")}
+                              className={cn(
+                                "size-4",
+                                item.enabled ? "text-emerald-600" : "text-ink-2",
+                              )}
                             />
                           </Button>
                           <Button
