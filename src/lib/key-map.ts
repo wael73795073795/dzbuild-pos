@@ -8,7 +8,7 @@ export const CUSTOM_KEY_MAP_EVENT = "dzpos:key-map-updated";
 export const DISABLED_KEYS_STORAGE_KEY = "dzpos.key_map.disabled.v1";
 
 /**
- * الاختصارات الأساسية لنقطة البيع فقط.
+ * الاختصارات الأساسية والإضافية لنقطة البيع.
  */
 export const DEFAULT_KEYS = {
   help: "F1",
@@ -23,6 +23,11 @@ export const DEFAULT_KEYS = {
   repeat_last: "F10",
   checkout: "F12",
   menu: "Escape",
+  floor: "",
+  gift_voucher: "",
+  flexy: "",
+  department_keys: "",
+  serial: "",
 } as const satisfies Record<string, string>;
 
 export type TillAction = keyof typeof DEFAULT_KEYS;
