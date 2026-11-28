@@ -3,11 +3,10 @@ import {
   Copy,
   Eye,
   EyeOff,
-  FileDown,
+  ImageDown,
   KeyRound,
   Pencil,
   Plus,
-  Printer,
   RefreshCw,
   UserCheck,
   UserX,
@@ -172,28 +171,52 @@ function writeShowBarcodeDigits(show: boolean): void {
   }
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function buildBarcodeSvgMarkup(code: string): string {
+function renderOwnerBarcodePngDataUrl(code: string, showDigits: boolean): string {
   const { bars, totalWidth, height } = buildBarcodeGeometry(code);
-  const rects = bars
-    .map(
-      (bar) =>
-        `<rect x="${bar.x}" y="0" width="${bar.width}" height="${height}" fill="${
-          bar.dark ? "#000000" : "#ffffff"
-        }" />`,
-    )
-    .join("");
+  const scale = 3;
+  const quietZone = 48;
+  const topPadding = 56;
+  const bottomPadding = showDigits ? 64 : 36;
+  const barHeight = height * scale;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalWidth} ${height}" width="${totalWidth}" height="${height}" style="display:block;max-width:100%;height:112px;background:#ffffff;" role="img" aria-label="Owner barcode ${escapeHtml(
-    code,
-  )}"><rect x="0" y="0" width="${totalWidth}" height="${height}" fill="#ffffff" />${rects}</svg>`;
+  const canvasWidth = totalWidth * scale + quietZone * 2;
+  const canvasHeight = topPadding + barHeight + bottomPadding;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Canvas 2D context unavailable");
+  }
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  ctx.fillStyle = "#111827";
+  ctx.font = "bold 22px Tahoma, Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("باركود صلاحية المالك", canvasWidth / 2, 28);
+
+  for (const bar of bars) {
+    if (bar.dark) {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(quietZone + bar.x * scale, topPadding, bar.width * scale, barHeight);
+    }
+  }
+
+  if (showDigits) {
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 24px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const spacedDigits = code.split("").join(" ");
+    ctx.fillText(spacedDigits, canvasWidth / 2, topPadding + barHeight + 34);
+  }
+
+  return canvas.toDataURL("image/png");
 }
 
 function NumericScaleBarcode({ code, showDigits }: { code: string; showDigits: boolean }) {
@@ -259,169 +282,19 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
     }
   };
 
-  const openPrintPreviewWindow = (mode: "print" | "pdf") => {
-    const svgMarkup = buildBarcodeSvgMarkup(barcode);
-    const digitsHtml = showDigits
-      ? `<div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:5px;margin-top:12px;direction:ltr;color:#000000;">${escapeHtml(
-          barcode,
-        )}</div>`
-      : "";
-
-    const html = `<!doctype html>
-<html lang="ar" dir="rtl">
-  <head>
-    <meta charset="utf-8" />
-    <title>باركود صلاحية المالك</title>
-    <style>
-      @page {
-        size: auto;
-        margin: 12mm;
-      }
-      * {
-        box-sizing: border-box;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      html, body {
-        width: 100%;
-        min-height: 100%;
-        margin: 0;
-        padding: 20px;
-        background: #ffffff;
-        color: #111111;
-        font-family: Tahoma, Arial, sans-serif;
-      }
-      .toolbar {
-        max-width: 640px;
-        margin: 0 auto 16px auto;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        background: #f9fafb;
-        border: 1px solid #d4d7dd;
-        border-radius: 10px;
-        padding: 10px 14px;
-      }
-      .toolbar-hint {
-        font-size: 13px;
-        color: #1f2937;
-      }
-      .toolbar-actions {
-        display: flex;
-        gap: 8px;
-      }
-      .btn {
-        cursor: pointer;
-        border: 1px solid #111827;
-        background: #111827;
-        color: #ffffff;
-        border-radius: 8px;
-        padding: 7px 14px;
-        font-size: 13px;
-        font-weight: 700;
-      }
-      .btn.secondary {
-        background: #ffffff;
-        color: #111827;
-      }
-      .sheet {
-        max-width: 640px;
-        margin: 0 auto;
-        background: #ffffff;
-        border: 1px solid #d4d7dd;
-        border-radius: 12px;
-        padding: 28px 24px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-      }
-      .title {
-        font-size: 18px;
-        font-weight: 700;
-        margin-bottom: 6px;
-        color: #000000;
-      }
-      .subtitle {
-        font-size: 13px;
-        color: #374151;
-        margin-bottom: 18px;
-      }
-      .barcode-box {
-        display: inline-flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        background: #ffffff;
-        border: 1px solid #d1d5db;
-        border-radius: 10px;
-        padding: 18px 22px;
-      }
-      @media print {
-        html, body {
-          background: #ffffff !important;
-          padding: 0 !important;
-        }
-        .toolbar {
-          display: none !important;
-        }
-        .sheet {
-          border: none !important;
-          border-radius: 0 !important;
-          padding: 12px !important;
-          max-width: 100% !important;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="toolbar">
-      <div class="toolbar-hint">
-        ${
-          mode === "pdf"
-            ? "معاينة الحفظ كـ PDF — اختر (Save as PDF / حفظ كـ PDF) ثم اضغط حفظ."
-            : "معاينة الطباعة — الباركود جاهز للطباعة أو الحفظ كـ PDF."
-        }
-      </div>
-      <div class="toolbar-actions">
-        <button type="button" class="btn" onclick="window.print()">
-          ${mode === "pdf" ? "حفظ PDF" : "طباعة"}
-        </button>
-        <button type="button" class="btn secondary" onclick="window.close()">إغلاق</button>
-      </div>
-    </div>
-    <div class="sheet">
-      <div class="title">باركود صلاحية المالك</div>
-      <div class="subtitle">للموافقة لمرة واحدة على العملية الحالية فقط</div>
-      <div class="barcode-box">
-        ${svgMarkup}
-        ${digitsHtml}
-      </div>
-    </div>
-    <script>
-      window.addEventListener("load", function () {
-        setTimeout(function () {
-          try {
-            window.print();
-          } catch (_) {}
-        }, 250);
-      });
-    </script>
-  </body>
-</html>`;
-
-    const printWindow = window.open("", "_blank", "width=760,height=560");
-    if (!printWindow) {
-      window.print();
-      return;
+  const handleSaveAsImage = () => {
+    try {
+      const dataUrl = renderOwnerBarcodePngDataUrl(barcode, showDigits);
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = `owner-barcode-${barcode.slice(-6)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success("تم حفظ باركود المالك كصورة PNG");
+    } catch {
+      toast.error("تعذر حفظ صورة الباركود");
     }
-
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
   };
 
   return (
@@ -442,13 +315,9 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
             {copied ? "تم النسخ" : "نسخ الرقم"}
           </Button>
-          <Button type="button" variant="outline" onClick={() => openPrintPreviewWindow("print")}>
-            <Printer aria-hidden />
-            معاينة وطباعة
-          </Button>
-          <Button type="button" variant="outline" onClick={() => openPrintPreviewWindow("pdf")}>
-            <FileDown aria-hidden />
-            حفظ PDF
+          <Button type="button" variant="outline" onClick={handleSaveAsImage}>
+            <ImageDown aria-hidden />
+            حفظ كصورة
           </Button>
           <Button type="button" variant="primary" onClick={handleRegenerate}>
             <RefreshCw aria-hidden />
@@ -461,10 +330,10 @@ function OwnerBarcodeCard({ isOwner }: { isOwner: boolean }) {
         <NumericScaleBarcode code={barcode} showDigits={showDigits} />
         <div className="max-w-md space-y-1.5 text-sm leading-relaxed text-ink-2">
           <p>
-            • باركود رقمي فريد بطول <strong>16 رقماً عشوائياً</strong> يظهر بكامل أعمدته في المعاينة والطباعة وحفظ الـ PDF.
+            • باركود رقمي فريد بطول <strong>16 رقماً عشوائياً</strong> يمكنك حفظه مباشرة كصورة PNG عالية الدقة لطباعتها أو استخدامها بسهولة.
           </p>
           <p>
-            • يمكنك <strong>إخفاء أو إظهار الأرقام</strong> وترك الرسم فقط في أي وقت.
+            • يمكنك <strong>إخفاء أو إظهار الأرقام</strong> قبل حفظ الصورة أو عرضها في أي وقت.
           </p>
           <p>
             • عند الضغط على <strong>توليد باركود جديد</strong> يتوقف الباركود القديم فوراً.
