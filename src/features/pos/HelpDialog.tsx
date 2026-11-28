@@ -20,20 +20,6 @@ const ACTION_TEXT: Partial<Record<TillAction, string>> = {
   repeat_last: "f10",
   checkout: "f12",
   menu: "escape",
-  floor: "floor",
-  flexy: "flexy",
-  gift_voucher: "giftVoucher",
-  serial: "serial",
-  department_keys: "departments",
-  quick_price: "quickPrice",
-  quick_weight: "quickWeight",
-  calculator: "calculator",
-  toggle_rail: "toggleRail",
-  screen_pos: "screenPos",
-  screen_settings: "screenSettings",
-  screen_products: "screenProducts",
-  screen_sales: "screenSales",
-  screen_customers: "screenCustomers",
 };
 
 /** The keys no one moves: the scale panel and the cart's own keys. */
