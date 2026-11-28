@@ -1315,20 +1315,20 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         zones: {
           receipt: {
             ...prev.zones.receipt,
-            hidden: zoneId === "receipt" ? false : prev.zones.receipt.hidden,
-            compact: zoneId === "receipt" ? false : prev.zones.receipt.compact,
+            hidden: safeZoneId === "receipt" ? false : prev.zones.receipt.hidden,
+            compact: safeZoneId === "receipt" ? false : prev.zones.receipt.compact,
             fullscreen: false,
           },
           actions: {
             ...prev.zones.actions,
-            hidden: zoneId === "actions" ? false : prev.zones.actions.hidden,
-            compact: zoneId === "actions" ? false : prev.zones.actions.compact,
+            hidden: safeZoneId === "actions" ? false : prev.zones.actions.hidden,
+            compact: safeZoneId === "actions" ? false : prev.zones.actions.compact,
             fullscreen: false,
           },
           products: {
             ...prev.zones.products,
-            hidden: zoneId === "products" ? false : prev.zones.products.hidden,
-            compact: zoneId === "products" ? false : prev.zones.products.compact,
+            hidden: safeZoneId === "products" ? false : prev.zones.products.hidden,
+            compact: safeZoneId === "products" ? false : prev.zones.products.compact,
             fullscreen: false,
           },
         },
@@ -1339,8 +1339,8 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
   const startZoneDrag = useCallback(
     (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
-      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       if (!isFreeMode) return;
+      const safeZoneId: PosZoneId = zoneId ?? "receipt";
       if ((e.target as HTMLElement).closest("button, input, select, textarea")) return;
       e.preventDefault();
       setActiveDragZone(safeZoneId);
