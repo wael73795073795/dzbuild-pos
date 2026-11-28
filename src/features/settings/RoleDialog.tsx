@@ -220,3 +220,4 @@ export function RoleDialog({ role, onClose }: { role: Role | null; onClose: () =
     </Dialog>
   );
 }
+
