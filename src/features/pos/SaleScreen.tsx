@@ -137,7 +137,7 @@ const POS_MODES: PosPresetDefinition[] = [
   { id: "h_bottom_receipt_left", label: "9. أفقي سفلي: إيصال يسار", orientation: "horizontal", order: ["receipt", "products", "actions"], leftWidth: 500 },
   { id: "h_bottom_products_left", label: "10. أفقي سفلي: منتجات يسار", orientation: "horizontal", order: ["products", "receipt", "actions"], leftWidth: 500 },
   { id: "h_receipt_top_products_bottom", label: "11. إيصال علوي / منتجات سفلي", orientation: "horizontal", order: ["receipt", "actions", "products"], leftWidth: 520 },
-  { id: "h_products_top_receipt_bottom", label: "12. منتجات علوي / إيصال سفلي", orientation: "horizontal", order: ["products", "actions", "receipt"], leftWidth: 520 },
+  { id: "h_products_top_receipt_bottom", label: "12. منتجات علوي / إيصال سفلي", orientation: "horizontal", order: ["products", "receipt", "actions"], leftWidth: 520 },
   { id: "free_mode", label: "الوضع الحر", orientation: "vertical", order: ["receipt", "actions", "products"], leftWidth: 500 },
 ];
 
