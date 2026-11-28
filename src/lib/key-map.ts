@@ -27,15 +27,9 @@ export const DEFAULT_KEYS = {
 
 export type TillAction = keyof typeof DEFAULT_KEYS;
 
-/** التحقق من صحة الاختصار الأساسي أو الاختصار الحر. */
+/** قبول أي اختصار غير فارغ للاختصارات الحرة والمخصصة. */
 export function isTillKey(key: string): key is Hotkey {
-  if (typeof key !== "string") return false;
-  const trimmed = key.trim();
-  if (!trimmed) return false;
-  if (/^(F([1-9]|1[0-2])|Escape|(Ctrl|Alt|Shift)\+[0-9])$/i.test(trimmed)) {
-    return true;
-  }
-  return /^(?:(Ctrl|Alt|Shift)\+)*[A-Za-z0-9]$/.test(trimmed);
+  return typeof key === "string" && key.trim().length > 0;
 }
 
 export function readCustomKeyMap(): Partial<Record<TillAction, Hotkey>> {
