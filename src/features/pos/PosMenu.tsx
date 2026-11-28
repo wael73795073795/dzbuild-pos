@@ -9,7 +9,6 @@ import { Sheet } from "@/components/ui/sheet";
 import { useLogout } from "@/lib/ipc/auth";
 import { usePriceLevels } from "@/lib/ipc/catalog";
 import type { Permission } from "@/lib/ipc/types";
-import { ariaKey, keyLabel } from "@/lib/key-map";
 import { localizedName } from "@/lib/names";
 import { useLang } from "@/lib/use-language";
 import { useCart } from "./cart-store";
@@ -69,23 +68,13 @@ export function PosMenu({ ctx, onClose }: { ctx: PosContext; onClose: () => void
         ) : null}
         {/* M8 (LOY-001): the gift voucher, on the till's key map's `gift_voucher` key (Ctrl+3) */}
         {on("gift_vouchers") && can("sales.create") ? (
-          <Button
-            className={item}
-            onClick={() => ctx.open({ kind: "giftVoucher" })}
-            shortcut={ariaKey(ctx.keys.gift_voucher)}
-            shortcutLabel={keyLabel(ctx.keys.gift_voucher, t)}
-          >
+          <Button className={item} onClick={() => ctx.open({ kind: "giftVoucher" })}>
             {t("pos:menu.giftVoucher")}
           </Button>
         ) : null}
         {/* M8: the packs' till actions (VRT-002 top-up, VRT-001 department keys, VRT-101 van) */}
         {on("flexy") ? (
-          <Button
-            className={item}
-            onClick={() => ctx.open({ kind: "pack", view: { kind: "flexy" } })}
-            shortcut={ariaKey(ctx.keys.flexy)}
-            shortcutLabel={keyLabel(ctx.keys.flexy, t)}
-          >
+          <Button className={item} onClick={() => ctx.open({ kind: "pack", view: { kind: "flexy" } })}>
             {t("pos:menu.flexy")}
           </Button>
         ) : null}
@@ -96,8 +85,6 @@ export function PosMenu({ ctx, onClose }: { ctx: PosContext; onClose: () => void
               ctx.toggleDepartments();
               onClose();
             }}
-            shortcut={ariaKey(ctx.keys.department_keys)}
-            shortcutLabel={keyLabel(ctx.keys.department_keys, t)}
           >
             {t("pos:menu.departments")}
           </Button>
@@ -107,20 +94,10 @@ export function PosMenu({ ctx, onClose }: { ctx: PosContext; onClose: () => void
             {t("pos:menu.van")}
           </Button>
         ) : null}
-        <Button
-          className={item}
-          onClick={() => ctx.open({ kind: "price" })}
-          shortcut={ariaKey(ctx.keys.price_check)}
-          shortcutLabel={keyLabel(ctx.keys.price_check, t)}
-        >
+        <Button className={item} onClick={() => ctx.open({ kind: "price" })}>
           {t("pos:menu.priceCheck")}
         </Button>
-        <Button
-          className={item}
-          onClick={() => ctx.open({ kind: "held" })}
-          shortcut={ariaKey(ctx.keys.held)}
-          shortcutLabel={keyLabel(ctx.keys.held, t)}
-        >
+        <Button className={item} onClick={() => ctx.open({ kind: "held" })}>
           {t("pos:menu.held")}
         </Button>
         <Button
@@ -129,8 +106,6 @@ export function PosMenu({ ctx, onClose }: { ctx: PosContext; onClose: () => void
             useCart.getState().repeatLast();
             onClose();
           }}
-          shortcut={ariaKey(ctx.keys.repeat_last)}
-          shortcutLabel={keyLabel(ctx.keys.repeat_last, t)}
         >
           {t("pos:menu.repeat")}
         </Button>
