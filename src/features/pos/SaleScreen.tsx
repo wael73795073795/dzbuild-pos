@@ -1,31 +1,33 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Barcode,
+  BookmarkCheck,
   Calculator,
   ChevronLeft,
   ChevronRight,
-  Clock,
+  Columns2,
   Copy,
   Delete,
   Equal,
   KeyRound,
-  Layers,
   Loader2,
   Lock,
+  Maximize2,
   Menu,
   Minimize2,
   Move,
   Pause,
   Percent,
-  Pin,
-  PinOff,
   RotateCcw,
+  Rows2,
   Scale,
   ShieldCheck,
   Tag,
   Trash2,
   Undo2,
   User,
+  Volume2,
+  VolumeX,
   Wallet,
   X,
 } from "lucide-react";
@@ -98,12 +100,51 @@ interface Notice {
 
 type PosZoneId = "receipt" | "actions" | "products";
 type DockOrientation = "vertical" | "horizontal";
-type PosPresetId = "default" | "receipt_focus" | "products_focus";
+type CustomSlotId = "slot1" | "slot2";
+
+type PosModeId =
+  | "v_default"
+  | "v_actions_top_right"
+  | "v_receipt_center"
+  | "v_products_left"
+  | "v_receipt_right"
+  | "v_actions_left"
+  | "h_top_receipt_left"
+  | "h_top_products_left"
+  | "h_bottom_receipt_left"
+  | "h_bottom_products_left"
+  | "h_receipt_top_products_bottom"
+  | "h_products_top_receipt_bottom"
+  | "free_mode";
+
+interface PosPresetDefinition {
+  id: PosModeId;
+  label: string;
+  orientation: DockOrientation;
+  order: [PosZoneId, PosZoneId, PosZoneId];
+  leftWidth?: number;
+}
+
+const POS_MODES: PosPresetDefinition[] = [
+  { id: "v_default", label: "1. افتراضي (رأسي)", orientation: "vertical", order: ["receipt", "actions", "products"], leftWidth: 500 },
+  { id: "v_actions_top_right", label: "2. مفاتيح أعلى اليمين", orientation: "vertical", order: ["receipt", "products", "actions"], leftWidth: 460 },
+  { id: "v_receipt_center", label: "3. الإيصال بالوسط", orientation: "vertical", order: ["products", "receipt", "actions"], leftWidth: 460 },
+  { id: "v_products_left", label: "4. المنتجات يسار", orientation: "vertical", order: ["products", "actions", "receipt"], leftWidth: 460 },
+  { id: "v_receipt_right", label: "5. الإيصال يمين", orientation: "vertical", order: ["actions", "products", "receipt"], leftWidth: 460 },
+  { id: "v_actions_left", label: "6. مفاتيح يسار", orientation: "vertical", order: ["actions", "receipt", "products"], leftWidth: 460 },
+  { id: "h_top_receipt_left", label: "7. أفقي: إيصال يسار", orientation: "horizontal", order: ["actions", "receipt", "products"], leftWidth: 500 },
+  { id: "h_top_products_left", label: "8. أفقي: منتجات يسار", orientation: "horizontal", order: ["actions", "products", "receipt"], leftWidth: 500 },
+  { id: "h_bottom_receipt_left", label: "9. أفقي سفلي: إيصال يسار", orientation: "horizontal", order: ["receipt", "products", "actions"], leftWidth: 500 },
+  { id: "h_bottom_products_left", label: "10. أفقي سفلي: منتجات يسار", orientation: "horizontal", order: ["products", "receipt", "actions"], leftWidth: 500 },
+  { id: "h_receipt_top_products_bottom", label: "11. إيصال علوي / منتجات سفلي", orientation: "horizontal", order: ["receipt", "actions", "products"], leftWidth: 520 },
+  { id: "h_products_top_receipt_bottom", label: "12. منتجات علوي / إيصال سفلي", orientation: "horizontal", order: ["products", "actions", "receipt"], leftWidth: 520 },
+  { id: "free_mode", label: "الوضع الحر", orientation: "vertical", order: ["receipt", "actions", "products"], leftWidth: 500 },
+];
 
 interface PosZoneState {
-  docked: boolean;
   compact: boolean;
   hidden: boolean;
+  fullscreen: boolean;
   offsetX: number;
   offsetY: number;
   width: number | null;
@@ -111,9 +152,9 @@ interface PosZoneState {
 }
 
 interface PosLayoutConfig {
+  mode: PosModeId;
   order: [PosZoneId, PosZoneId, PosZoneId];
   toolbarOrientation: DockOrientation;
-  locked: boolean;
   zones: Record<PosZoneId, PosZoneState>;
 }
 
@@ -122,62 +163,101 @@ const VOUCHER_MODULES: Module[] = ["gift_vouchers", "loyalty", "orders", "repair
 
 const DEPARTMENTS_KEY = "dzpos.till.departments";
 const SPLIT_WIDTH_KEY = "dzpos.till.splitWidth";
-const SPLIT_PINNED_KEY = "dzpos.till.splitPinned";
 const RAIL_COLLAPSED_KEY = "dzpos.till.railCollapsed";
-const POS_LAYOUT_KEY = "dzpos.till.layout.v2";
+const POS_LAYOUT_KEY = "dzpos.till.layout.v4";
+const CUSTOM_SLOTS_KEY = "dzpos.till.customLayouts.v1";
+const SOUND_CHIME_KEY = "dzpos.till.softChime.v1";
 
 const DEFAULT_NO_BARCODE_NAME = "صنف بدون باركود";
 const NO_BARCODE_LOOKUP_CODE = "0000000000000";
 
-const DEFAULT_LEFT_WIDTH = 520;
-const MIN_LEFT_WIDTH = 300;
-const MAX_LEFT_WIDTH = 860;
-const MIN_RIGHT_WIDTH = 340;
+const DEFAULT_LEFT_WIDTH = 500;
+const MIN_LEFT_WIDTH = 280;
+const MAX_LEFT_WIDTH = 920;
+const MIN_RIGHT_WIDTH = 300;
 
-const CART_TRACK_CAPACITY = 20;
-const PAUSE_WAIT_THRESHOLD_MS = 12_000;
-const IDLE_ROAM_THRESHOLD_MS = 20_000;
+const POS_3D_BTN =
+  "border border-line/90 shadow-[0_3px_0_0_rgba(15,23,42,0.22),0_4px_10px_-2px_rgba(15,23,42,0.18)] transition-all duration-150 hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-[0_1px_0_0_rgba(15,23,42,0.2)]";
+
+const POS_3D_PRIMARY =
+  "border border-amber-500/80 bg-amber-400 text-slate-950 shadow-[0_4px_0_0_rgb(180,83,9),0_8px_16px_-4px_rgba(245,158,11,0.45)] transition-all duration-150 hover:-translate-y-0.5 hover:bg-amber-300 active:translate-y-0.5 active:shadow-[0_1px_0_0_rgb(180,83,9)]";
+
+const POS_3D_PANEL =
+  "rounded-xl border border-line bg-surface shadow-[0_6px_18px_-4px_rgba(15,23,42,0.16),inset_0_1px_0_0_rgba(255,255,255,0.12)]";
 
 const DEFAULT_POS_LAYOUT: PosLayoutConfig = {
+  mode: "v_default",
   order: ["receipt", "actions", "products"],
   toolbarOrientation: "vertical",
-  locked: false,
   zones: {
-    receipt: {
-      docked: false,
-      compact: false,
-      hidden: false,
-      offsetX: 0,
-      offsetY: 0,
-      width: null,
-      height: null,
-    },
-    actions: {
-      docked: false,
-      compact: false,
-      hidden: false,
-      offsetX: 0,
-      offsetY: 0,
-      width: null,
-      height: null,
-    },
-    products: {
-      docked: false,
-      compact: false,
-      hidden: false,
-      offsetX: 0,
-      offsetY: 0,
-      width: null,
-      height: null,
-    },
+    receipt: { compact: false, hidden: false, fullscreen: false, offsetX: 0, offsetY: 0, width: null, height: null },
+    actions: { compact: false, hidden: false, fullscreen: false, offsetX: 0, offsetY: 0, width: null, height: null },
+    products: { compact: false, hidden: false, fullscreen: false, offsetX: 0, offsetY: 0, width: null, height: null },
   },
 };
+
+function readSoftChimeEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(SOUND_CHIME_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function writeSoftChimeEnabled(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(SOUND_CHIME_KEY, enabled ? "1" : "0");
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function playSoftChime(kind: "add" | "error", enabled: boolean): void {
+  if (!enabled) return;
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = kind === "add" ? "sine" : "triangle";
+    const now = ctx.currentTime;
+    if (kind === "add") {
+      osc.frequency.setValueAtTime(660, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.08);
+      gain.gain.setValueAtTime(0.045, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.095);
+    } else {
+      osc.frequency.setValueAtTime(290, now);
+      osc.frequency.linearRampToValueAtTime(210, now + 0.14);
+      gain.gain.setValueAtTime(0.05, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.16);
+    }
+    osc.onended = () => {
+      void ctx.close().catch(() => undefined);
+    };
+  } catch {
+    // ignore audio errors
+  }
+}
 
 function readPosLayout(): PosLayoutConfig {
   try {
     const raw = window.localStorage.getItem(POS_LAYOUT_KEY);
     if (!raw) return DEFAULT_POS_LAYOUT;
     const parsed = JSON.parse(raw) as Partial<PosLayoutConfig>;
+    const validModes = new Set(POS_MODES.map((m) => m.id));
+    const mode: PosModeId = parsed.mode && validModes.has(parsed.mode) ? parsed.mode : "v_default";
     const validIds: PosZoneId[] = ["receipt", "actions", "products"];
     const orderList = Array.isArray(parsed.order)
       ? parsed.order.filter((id): id is PosZoneId => validIds.includes(id as PosZoneId))
@@ -192,14 +272,13 @@ function readPosLayout(): PosLayoutConfig {
     ];
     const toolbarOrientation: DockOrientation =
       parsed.toolbarOrientation === "horizontal" ? "horizontal" : "vertical";
-    const locked = Boolean(parsed.locked);
 
     const mergeZone = (id: PosZoneId): PosZoneState => {
       const z = parsed.zones?.[id];
       return {
-        docked: Boolean(z?.docked),
         compact: Boolean(z?.compact),
         hidden: Boolean(z?.hidden),
+        fullscreen: Boolean(z?.fullscreen),
         offsetX: typeof z?.offsetX === "number" && Number.isFinite(z.offsetX) ? z.offsetX : 0,
         offsetY: typeof z?.offsetY === "number" && Number.isFinite(z.offsetY) ? z.offsetY : 0,
         width: typeof z?.width === "number" && Number.isFinite(z.width) && z.width > 80 ? z.width : null,
@@ -209,9 +288,9 @@ function readPosLayout(): PosLayoutConfig {
     };
 
     return {
+      mode,
       order,
       toolbarOrientation,
-      locked,
       zones: {
         receipt: mergeZone("receipt"),
         actions: mergeZone("actions"),
@@ -226,6 +305,24 @@ function readPosLayout(): PosLayoutConfig {
 function savePosLayout(layout: PosLayoutConfig): void {
   try {
     window.localStorage.setItem(POS_LAYOUT_KEY, JSON.stringify(layout));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function readCustomSlots(): Partial<Record<CustomSlotId, PosLayoutConfig>> {
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_SLOTS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Partial<Record<CustomSlotId, PosLayoutConfig>>;
+  } catch {
+    return {};
+  }
+}
+
+function writeCustomSlots(slots: Partial<Record<CustomSlotId, PosLayoutConfig>>): void {
+  try {
+    window.localStorage.setItem(CUSTOM_SLOTS_KEY, JSON.stringify(slots));
   } catch {
     // ignore storage errors
   }
@@ -263,22 +360,6 @@ function rememberedSplitWidth(): number {
 function rememberSplitWidth(width: number): void {
   try {
     window.localStorage.setItem(SPLIT_WIDTH_KEY, String(Math.round(width)));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function rememberedSplitPinned(): boolean {
-  try {
-    return window.localStorage.getItem(SPLIT_PINNED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function rememberSplitPinned(pinned: boolean): void {
-  try {
-    window.localStorage.setItem(SPLIT_PINNED_KEY, pinned ? "1" : "0");
   } catch {
     // ignore storage errors
   }
@@ -445,7 +526,7 @@ function QuickPriceModal({
     >
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="w-full max-w-[360px] rounded-xl border border-line bg-surface p-4 text-ink shadow-xl"
+        className={cn("w-full max-w-[360px] p-4 text-ink shadow-2xl", POS_3D_PANEL)}
       >
         <div className="mb-3 flex items-center justify-between border-b border-line pb-2">
           <div className="flex items-center gap-2">
@@ -456,7 +537,10 @@ function QuickPriceModal({
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-md bg-surface-2 text-ink-2 hover:text-ink",
+              POS_3D_BTN,
+            )}
           >
             <X aria-hidden className="size-4" />
           </button>
@@ -491,10 +575,10 @@ function QuickPriceModal({
         </div>
 
         <div className="mt-4 flex items-center justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+          <Button type="button" variant="outline" className={POS_3D_BTN} onClick={onClose} disabled={submitting}>
             إلغاء
           </Button>
-          <Button type="submit" variant="primary" disabled={submitting}>
+          <Button type="submit" className={POS_3D_PRIMARY} disabled={submitting}>
             {submitting ? <Loader2 aria-hidden className="size-4 animate-spin" /> : null}
             إضافة للفاتورة
           </Button>
@@ -576,7 +660,7 @@ function QuickWeightModal({
     >
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="w-full max-w-[360px] rounded-xl border border-line bg-surface p-4 text-ink shadow-xl"
+        className={cn("w-full max-w-[360px] p-4 text-ink shadow-2xl", POS_3D_PANEL)}
       >
         <div className="mb-3 flex items-center justify-between border-b border-line pb-2">
           <div className="flex items-center gap-2">
@@ -587,7 +671,10 @@ function QuickWeightModal({
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-md bg-surface-2 text-ink-2 hover:text-ink",
+              POS_3D_BTN,
+            )}
           >
             <X aria-hidden className="size-4" />
           </button>
@@ -623,10 +710,10 @@ function QuickWeightModal({
         </div>
 
         <div className="mt-4 flex items-center justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+          <Button type="button" variant="outline" className={POS_3D_BTN} onClick={onClose} disabled={submitting}>
             إلغاء
           </Button>
-          <Button type="submit" variant="primary" disabled={submitting}>
+          <Button type="submit" className={POS_3D_PRIMARY} disabled={submitting}>
             {submitting ? <Loader2 aria-hidden className="size-4 animate-spin" /> : null}
             حساب وإضافة
           </Button>
@@ -771,7 +858,7 @@ function PosCalculatorModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-[320px] rounded-xl border border-line bg-surface p-3.5 text-ink shadow-xl">
+      <div className={cn("w-full max-w-[320px] p-3.5 text-ink shadow-2xl", POS_3D_PANEL)}>
         <div className="mb-2.5 flex items-center justify-between border-b border-line pb-2">
           <div className="flex items-center gap-2">
             <Calculator aria-hidden className="size-4 text-brand" />
@@ -783,7 +870,10 @@ function PosCalculatorModal({
               onClick={copyResult}
               title="نسخ النتيجة"
               aria-label="نسخ النتيجة"
-              className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
+              className={cn(
+                "inline-flex size-7 items-center justify-center rounded-md bg-surface-2 text-ink-2 hover:text-ink",
+                POS_3D_BTN,
+              )}
             >
               <Copy aria-hidden className="size-3.5" />
             </button>
@@ -792,14 +882,17 @@ function PosCalculatorModal({
               onClick={onClose}
               title="إغلاق"
               aria-label="إغلاق"
-              className="inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 hover:text-ink"
+              className={cn(
+                "inline-flex size-7 items-center justify-center rounded-md bg-surface-2 text-ink-2 hover:text-ink",
+                POS_3D_BTN,
+              )}
             >
               <X aria-hidden className="size-4" />
             </button>
           </div>
         </div>
 
-        <div className="mb-3 rounded-lg border border-line bg-surface-2 px-3 py-2 text-end">
+        <div className="mb-3 rounded-lg border border-line bg-surface-2 px-3 py-2 text-end shadow-inner">
           <div className="min-h-4 truncate text-xs text-ink-2" dir="ltr">
             {expr || " "}
           </div>
@@ -815,10 +908,11 @@ function PosCalculatorModal({
               type="button"
               onClick={btn.onClick}
               className={cn(
-                "flex h-11 items-center justify-center rounded-lg border text-base font-bold transition-colors",
+                "flex h-11 items-center justify-center rounded-lg text-base font-bold",
+                POS_3D_BTN,
                 btn.tone === "op" && "border-brand/40 bg-brand-soft text-brand",
-                btn.tone === "muted" && "border-line bg-surface-2 text-ink-2 hover:text-ink",
-                !btn.tone && "border-line bg-surface hover:bg-surface-2",
+                btn.tone === "muted" && "bg-surface-2 text-ink-2 hover:text-ink",
+                !btn.tone && "bg-surface hover:bg-surface-2",
               )}
             >
               {btn.label === "⌫" ? <Delete aria-hidden className="size-4" /> : btn.label}
@@ -828,7 +922,10 @@ function PosCalculatorModal({
           <button
             type="button"
             onClick={calculate}
-            className="row-span-2 flex items-center justify-center rounded-lg bg-brand text-lg font-bold text-brand-ink transition-opacity hover:opacity-95"
+            className={cn(
+              "row-span-2 flex items-center justify-center rounded-lg text-lg font-bold",
+              POS_3D_PRIMARY,
+            )}
             aria-label="يساوي"
           >
             <Equal aria-hidden className="size-5" />
@@ -839,7 +936,10 @@ function PosCalculatorModal({
               key={btn.label}
               type="button"
               onClick={btn.onClick}
-              className="flex h-11 items-center justify-center rounded-lg border border-line bg-surface text-base font-bold transition-colors hover:bg-surface-2"
+              className={cn(
+                "flex h-11 items-center justify-center rounded-lg bg-surface text-base font-bold hover:bg-surface-2",
+                POS_3D_BTN,
+              )}
             >
               {btn.label}
             </button>
@@ -847,57 +947,6 @@ function PosCalculatorModal({
         </div>
       </div>
     </div>
-  );
-}
-
-function SupermarketCartIcon({
-  fillRatio,
-  roaming,
-  justAdded,
-}: {
-  fillRatio: number;
-  roaming: boolean;
-  justAdded: boolean;
-}) {
-  const clamped = Math.max(0, Math.min(1, fillRatio));
-  const fillHeight = Math.round(clamped * 9);
-  const fillY = 12 - fillHeight;
-  const nearFull = !roaming && clamped >= 0.85;
-
-  return (
-    <svg
-      viewBox="0 0 28 24"
-      className={cn(
-        "h-6 w-7 shrink-0 transition-transform duration-300",
-        roaming && "animate-pulse",
-        justAdded && "scale-110",
-      )}
-      aria-hidden="true"
-    >
-      {clamped > 0 ? (
-        <rect
-          x="8.5"
-          y={fillY}
-          width="11"
-          height={fillHeight}
-          rx="1.5"
-          className={cn(
-            "transition-all duration-300",
-            nearFull ? "fill-success/80" : "fill-primary/70",
-          )}
-        />
-      ) : null}
-      <path
-        d="M2.5 3.5h3.2l2.4 11.2a2 2 0 0 0 2 1.6h10.4a2 2 0 0 0 1.95-1.55L24.5 7H7.2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="10.5" cy="20" r="1.7" fill="currentColor" />
-      <circle cx="20.5" cy="20" r="1.7" fill="currentColor" />
-    </svg>
   );
 }
 
@@ -946,9 +995,18 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const [departmentsOn, setDepartmentsOn] = useState(rememberedDepartments);
   const departments = departmentsOn && modules.includes("department_keys");
 
+  const [softChimeEnabled, setSoftChimeEnabled] = useState<boolean>(readSoftChimeEnabled);
+  const toggleSoftChime = useCallback(() => {
+    setSoftChimeEnabled((prev) => {
+      const next = !prev;
+      writeSoftChimeEnabled(next);
+      toast.info(next ? "تم تفعيل التنبيه الصوتي الخفيف" : "تم إيقاف التنبيه الصوتي الخفيف");
+      return next;
+    });
+  }, []);
+
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState<number>(rememberedSplitWidth);
-  const [splitPinned, setSplitPinned] = useState<boolean>(rememberedSplitPinned);
   const [railCollapsed, setRailCollapsed] = useState<boolean>(rememberedRailCollapsed);
   const [draggingSplit, setDraggingSplit] = useState(false);
 
@@ -966,6 +1024,15 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     };
   });
   const [activeDragZone, setActiveDragZone] = useState<PosZoneId | null>(null);
+  const [lastPresetMode, setLastPresetMode] = useState<PosModeId>(() =>
+    posLayout.mode !== "free_mode" ? posLayout.mode : "v_default",
+  );
+  const [dockNotice, setDockNotice] = useState<string | null>(null);
+  const [customSlots, setCustomSlots] = useState<Partial<Record<CustomSlotId, PosLayoutConfig>>>(
+    readCustomSlots,
+  );
+
+  const isFreeMode = posLayout.mode === "free_mode";
 
   const updatePosLayout = useCallback((updater: (prev: PosLayoutConfig) => PosLayoutConfig) => {
     setPosLayout((prev) => {
@@ -975,16 +1042,107 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     });
   }, []);
 
-  const toggleLayoutLock = useCallback(() => {
-    updatePosLayout((prev) => ({ ...prev, locked: !prev.locked }));
-  }, [updatePosLayout]);
+  const clampLeftWidth = useCallback((desired: number): number => {
+    const containerWidth = splitContainerRef.current?.clientWidth ?? window.innerWidth;
+    const maxAllowedByViewport = Math.max(MIN_LEFT_WIDTH, containerWidth - MIN_RIGHT_WIDTH);
+    const upper = Math.min(MAX_LEFT_WIDTH, maxAllowedByViewport);
+    return Math.max(MIN_LEFT_WIDTH, Math.min(upper, desired));
+  }, []);
 
-  const toggleToolbarOrientation = useCallback(() => {
-    updatePosLayout((prev) => {
-      if (prev.locked) {
-        toast.info("التخطيط مقفل — فك القفل أولاً لتغيير اتجاه شريط الأزرار");
-        return prev;
+  const selectMode = useCallback(
+    (modeId: PosModeId) => {
+      if (modeId !== "free_mode") {
+        setLastPresetMode(modeId);
       }
+      const preset = POS_MODES.find((m) => m.id === modeId) ?? POS_MODES[0]!;
+      const nextLeft = clampLeftWidth(preset.leftWidth ?? DEFAULT_LEFT_WIDTH);
+      setLeftWidth(nextLeft);
+      rememberSplitWidth(nextLeft);
+
+      updatePosLayout((prev) => ({
+        mode: preset.id,
+        order: [...preset.order] as [PosZoneId, PosZoneId, PosZoneId],
+        toolbarOrientation: preset.orientation,
+        zones: {
+          receipt: {
+            ...prev.zones.receipt,
+            hidden: false,
+            compact: false,
+            fullscreen: false,
+            offsetX: 0,
+            offsetY: 0,
+            width: null,
+            height: null,
+          },
+          actions: {
+            ...prev.zones.actions,
+            hidden: false,
+            compact: preset.orientation === "vertical" ? railCollapsed : false,
+            fullscreen: false,
+            offsetX: 0,
+            offsetY: 0,
+            width: null,
+            height: preset.orientation === "horizontal" ? 72 : null,
+          },
+          products: {
+            ...prev.zones.products,
+            hidden: false,
+            compact: false,
+            fullscreen: false,
+            offsetX: 0,
+            offsetY: 0,
+            width: null,
+            height: null,
+          },
+        },
+      }));
+    },
+    [clampLeftWidth, railCollapsed, updatePosLayout],
+  );
+
+  const resetFreeModeDimensions = useCallback(() => {
+    const nextLeft = clampLeftWidth(DEFAULT_LEFT_WIDTH);
+    setLeftWidth(nextLeft);
+    rememberSplitWidth(nextLeft);
+    updatePosLayout((prev) => ({
+      ...prev,
+      zones: {
+        receipt: {
+          ...prev.zones.receipt,
+          offsetX: 0,
+          offsetY: 0,
+          width: null,
+          height: null,
+          fullscreen: false,
+          compact: false,
+          hidden: false,
+        },
+        actions: {
+          ...prev.zones.actions,
+          offsetX: 0,
+          offsetY: 0,
+          width: null,
+          height: prev.toolbarOrientation === "horizontal" ? 72 : null,
+          fullscreen: false,
+          hidden: false,
+        },
+        products: {
+          ...prev.zones.products,
+          offsetX: 0,
+          offsetY: 0,
+          width: null,
+          height: null,
+          fullscreen: false,
+          compact: false,
+          hidden: false,
+        },
+      },
+    }));
+    toast.success("تم تصفير مقاسات ومواقع الوضع الحر");
+  }, [clampLeftWidth, updatePosLayout]);
+
+  const toggleOrientationQuick = useCallback(() => {
+    updatePosLayout((prev) => {
       const nextOrientation: DockOrientation =
         prev.toolbarOrientation === "vertical" ? "horizontal" : "vertical";
       return {
@@ -994,60 +1152,74 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           ...prev.zones,
           actions: {
             ...prev.zones.actions,
-            height: nextOrientation === "horizontal" ? 76 : null,
-            width: nextOrientation === "horizontal" ? null : prev.zones.actions.width,
+            compact: nextOrientation === "vertical" ? railCollapsed : false,
+            height: nextOrientation === "horizontal" ? 72 : null,
           },
         },
       };
     });
-  }, [updatePosLayout]);
+  }, [railCollapsed, updatePosLayout]);
 
-  const swapZones = useCallback(
-    (first: PosZoneId, second: PosZoneId) => {
-      if (first === second) return;
-      updatePosLayout((prev) => {
-        if (prev.locked) {
-          toast.info("التخطيط مقفل — فك القفل أولاً لتبديل الأجزاء");
-          return prev;
-        }
-        const nextOrder = [...prev.order] as [PosZoneId, PosZoneId, PosZoneId];
-        const idxA = nextOrder.indexOf(first);
-        const idxB = nextOrder.indexOf(second);
-        if (idxA !== -1 && idxB !== -1) {
-          nextOrder[idxA] = second;
-          nextOrder[idxB] = first;
-        }
-        return {
-          ...prev,
-          order: nextOrder,
-        };
+  const saveCustomSlot = useCallback(
+    (slotId: CustomSlotId) => {
+      const snapshot: PosLayoutConfig = {
+        mode: posLayout.mode,
+        order: [...posLayout.order] as [PosZoneId, PosZoneId, PosZoneId],
+        toolbarOrientation: posLayout.toolbarOrientation,
+        zones: {
+          receipt: { ...posLayout.zones.receipt },
+          actions: { ...posLayout.zones.actions },
+          products: { ...posLayout.zones.products },
+        },
+      };
+      setCustomSlots((prev) => {
+        const next = { ...prev, [slotId]: snapshot };
+        writeCustomSlots(next);
+        return next;
       });
+      toast.success(slotId === "slot1" ? "تم حفظ التخطيط المخصص 1" : "تم حفظ التخطيط المخصص 2");
     },
-    [updatePosLayout],
+    [posLayout],
   );
 
-  const cycleZonePosition = useCallback(
-    (zoneId: PosZoneId) => {
-      const safeZoneId: PosZoneId = zoneId ?? "receipt";
-      updatePosLayout((prev) => {
-        if (prev.locked) {
-          toast.info("التخطيط مقفل — فك القفل أولاً لتحريك الأجزاء");
-          return prev;
-        }
-        const idx = prev.order.indexOf(safeZoneId);
-        if (idx === -1) return prev;
-        const nextIdx = (idx + 1) % prev.order.length;
-        const nextOrder = [...prev.order] as [PosZoneId, PosZoneId, PosZoneId];
-        const [moved] = nextOrder.splice(idx, 1);
-        nextOrder.splice(nextIdx, 0, moved ?? safeZoneId);
-        return {
-          ...prev,
-          order: nextOrder,
-        };
-      });
+  const loadCustomSlot = useCallback(
+    (slotId: CustomSlotId) => {
+      const saved = customSlots[slotId];
+      if (!saved) {
+        toast.info(
+          slotId === "slot1"
+            ? "التخطيط 1 غير محفوظ بعد — اضغط حفظ 1 لحفظ تنسيقك الحالي"
+            : "التخطيط 2 غير محفوظ بعد — اضغط حفظ 2 لحفظ تنسيقك الحالي",
+        );
+        return;
+      }
+      const restored: PosLayoutConfig = {
+        mode: saved.mode,
+        order: [...saved.order] as [PosZoneId, PosZoneId, PosZoneId],
+        toolbarOrientation: saved.toolbarOrientation,
+        zones: {
+          receipt: { ...saved.zones.receipt },
+          actions: { ...saved.zones.actions },
+          products: { ...saved.zones.products },
+        },
+      };
+      setPosLayout(restored);
+      savePosLayout(restored);
+      if (restored.zones.receipt.width) {
+        setLeftWidth(clampLeftWidth(restored.zones.receipt.width));
+      }
+      toast.success(slotId === "slot1" ? "تم تحميل التخطيط المخصص 1" : "تم تحميل التخطيط المخصص 2");
     },
-    [updatePosLayout],
+    [clampLeftWidth, customSlots],
   );
+
+  const toggleFreeMode = useCallback(() => {
+    if (isFreeMode) {
+      selectMode(lastPresetMode || "v_default");
+    } else {
+      selectMode("free_mode");
+    }
+  }, [isFreeMode, lastPresetMode, selectMode]);
 
   const toggleZoneCompact = useCallback(
     (zoneId: PosZoneId) => {
@@ -1075,7 +1247,36 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [updatePosLayout],
   );
 
-  const minimizeZoneToIcon = useCallback(
+  const toggleZoneFullscreen = useCallback(
+    (zoneId: PosZoneId) => {
+      if (zoneId === "actions") return;
+      updatePosLayout((prev) => {
+        const nextFs = !prev.zones[zoneId].fullscreen;
+        return {
+          ...prev,
+          zones: {
+            receipt: {
+              ...prev.zones.receipt,
+              fullscreen: zoneId === "receipt" ? nextFs : false,
+              hidden: false,
+            },
+            products: {
+              ...prev.zones.products,
+              fullscreen: zoneId === "products" ? nextFs : false,
+              hidden: false,
+            },
+            actions: {
+              ...prev.zones.actions,
+              fullscreen: false,
+            },
+          },
+        };
+      });
+    },
+    [updatePosLayout],
+  );
+
+  const minimizeZoneToDock = useCallback(
     (zoneId: PosZoneId) => {
       const safeZoneId: PosZoneId = zoneId ?? "receipt";
       updatePosLayout((prev) => ({
@@ -1085,28 +1286,50 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           [safeZoneId]: {
             ...prev.zones[safeZoneId],
             hidden: true,
+            fullscreen: false,
           },
         },
       }));
+      const label =
+        safeZoneId === "receipt"
+          ? "الإيصال"
+          : safeZoneId === "actions"
+            ? "المفاتيح"
+            : "المنتجات والباركود";
+      setDockNotice(`تم إنزال "${label}" للأسفل — الاختصارات والباركود ما زالا نشطين`);
     },
     [updatePosLayout],
   );
 
-  const restoreZone = useCallback(
+  useEffect(() => {
+    if (!dockNotice) return;
+    const t = window.setTimeout(() => setDockNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [dockNotice]);
+
+  const restoreZoneFromDock = useCallback(
     (zoneId: PosZoneId) => {
       const safeZoneId: PosZoneId = zoneId ?? "receipt";
       updatePosLayout((prev) => ({
         ...prev,
         zones: {
-          ...prev.zones,
-          [safeZoneId]: {
-            ...prev.zones[safeZoneId],
-            hidden: false,
-            compact: false,
-            offsetX: 0,
-            offsetY: 0,
-            width: null,
-            height: null,
+          receipt: {
+            ...prev.zones.receipt,
+            hidden: zoneId === "receipt" ? false : prev.zones.receipt.hidden,
+            compact: zoneId === "receipt" ? false : prev.zones.receipt.compact,
+            fullscreen: false,
+          },
+          actions: {
+            ...prev.zones.actions,
+            hidden: zoneId === "actions" ? false : prev.zones.actions.hidden,
+            compact: zoneId === "actions" ? false : prev.zones.actions.compact,
+            fullscreen: false,
+          },
+          products: {
+            ...prev.zones.products,
+            hidden: zoneId === "products" ? false : prev.zones.products.hidden,
+            compact: zoneId === "products" ? false : prev.zones.products.compact,
+            fullscreen: false,
           },
         },
       }));
@@ -1114,58 +1337,10 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     [updatePosLayout],
   );
 
-  const clampLeftWidth = useCallback((desired: number): number => {
-    const containerWidth = splitContainerRef.current?.clientWidth ?? window.innerWidth;
-    const maxAllowedByViewport = Math.max(MIN_LEFT_WIDTH, containerWidth - MIN_RIGHT_WIDTH);
-    const upper = Math.min(MAX_LEFT_WIDTH, maxAllowedByViewport);
-    return Math.max(MIN_LEFT_WIDTH, Math.min(upper, desired));
-  }, []);
-
-  const applyPreset = useCallback(
-    (preset: PosPresetId) => {
-      updatePosLayout((prev) => {
-        if (prev.locked) {
-          toast.info("التخطيط مقفل — فك القفل أولاً لاختيار قالب");
-          return prev;
-        }
-        if (preset === "receipt_focus") {
-          setLeftWidth(clampLeftWidth(660));
-          return {
-            ...prev,
-            order: ["receipt", "actions", "products"],
-            zones: {
-              receipt: { ...prev.zones.receipt, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
-              actions: { ...prev.zones.actions, hidden: false, offsetX: 0, offsetY: 0 },
-              products: { ...prev.zones.products, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
-            },
-          };
-        }
-        if (preset === "products_focus") {
-          setLeftWidth(clampLeftWidth(380));
-          return {
-            ...prev,
-            order: ["products", "actions", "receipt"],
-            zones: {
-              receipt: { ...prev.zones.receipt, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
-              actions: { ...prev.zones.actions, hidden: false, offsetX: 0, offsetY: 0 },
-              products: { ...prev.zones.products, hidden: false, compact: false, offsetX: 0, offsetY: 0, width: null, height: null },
-            },
-          };
-        }
-        setLeftWidth(clampLeftWidth(DEFAULT_LEFT_WIDTH));
-        return {
-          ...DEFAULT_POS_LAYOUT,
-          locked: false,
-        };
-      });
-    },
-    [clampLeftWidth, updatePosLayout],
-  );
-
   const startZoneDrag = useCallback(
     (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
       const safeZoneId: PosZoneId = zoneId ?? "receipt";
-      if (posLayout.locked) return;
+      if (!isFreeMode) return;
       if ((e.target as HTMLElement).closest("button, input, select, textarea")) return;
       e.preventDefault();
       setActiveDragZone(safeZoneId);
@@ -1179,8 +1354,10 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       const onMove = (moveEvent: globalThis.PointerEvent) => {
         const dx = moveEvent.clientX - startX;
         const dy = moveEvent.clientY - startY;
-        const clampedX = Math.max(-360, Math.min(360, baseX + dx));
-        const clampedY = Math.max(-240, Math.min(240, baseY + dy));
+        const maxBoundX = Math.max(900, window.innerWidth);
+        const maxBoundY = Math.max(700, window.innerHeight);
+        const clampedX = Math.max(-maxBoundX, Math.min(maxBoundX, baseX + dx));
+        const clampedY = Math.max(-maxBoundY, Math.min(maxBoundY, baseY + dy));
         updatePosLayout((prev) => ({
           ...prev,
           zones: {
@@ -1204,34 +1381,64 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [posLayout.locked, posLayout.zones, updatePosLayout],
+    [isFreeMode, posLayout.zones, updatePosLayout],
   );
 
-  const startZoneResize = useCallback(
-    (zoneId: PosZoneId, e: PointerEvent<HTMLElement>) => {
-      const safeZoneId: PosZoneId = zoneId ?? "receipt";
-      if (posLayout.locked) return;
+  const startEdgeResize = useCallback(
+    (
+      zoneId: PosZoneId,
+      edge: "right" | "left" | "bottom" | "top" | "corner",
+      e: PointerEvent<HTMLElement>,
+    ) => {
+      const safeId: PosZoneId = zoneId ?? "receipt";
+      if (!isFreeMode) return;
       e.preventDefault();
       e.stopPropagation();
-      setActiveDragZone(safeZoneId);
+      setActiveDragZone(safeId);
       setDraggingSplit(true);
       const startX = e.clientX;
       const startY = e.clientY;
       const rect = e.currentTarget.parentElement?.getBoundingClientRect();
-      const startW = posLayout.zones[safeZoneId].width ?? rect?.width ?? 400;
-      const startH = posLayout.zones[safeZoneId].height ?? rect?.height ?? 320;
+      const startW = posLayout.zones[safeId].width ?? rect?.width ?? 400;
+      const startH = posLayout.zones[safeId].height ?? rect?.height ?? 320;
+      const startOffsetX = posLayout.zones[safeId].offsetX;
+      const startOffsetY = posLayout.zones[safeId].offsetY;
 
       const onMove = (moveEvent: globalThis.PointerEvent) => {
-        const nextW = Math.max(160, Math.min(1100, Math.round(startW + (moveEvent.clientX - startX))));
-        const nextH = Math.max(64, Math.min(900, Math.round(startH + (moveEvent.clientY - startY))));
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        let nextW = startW;
+        let nextH = startH;
+        let nextOffsetX = startOffsetX;
+        let nextOffsetY = startOffsetY;
+
+        if (edge === "right") {
+          nextW = Math.max(120, Math.min(window.innerWidth, Math.round(startW + dx)));
+        } else if (edge === "left") {
+          const candidateW = Math.max(120, Math.min(window.innerWidth, Math.round(startW - dx)));
+          nextOffsetX = Math.round(startOffsetX + (startW - candidateW));
+          nextW = candidateW;
+        } else if (edge === "bottom") {
+          nextH = Math.max(60, Math.min(window.innerHeight, Math.round(startH + dy)));
+        } else if (edge === "top") {
+          const candidateH = Math.max(60, Math.min(window.innerHeight, Math.round(startH - dy)));
+          nextOffsetY = Math.round(startOffsetY + (startH - candidateH));
+          nextH = candidateH;
+        } else if (edge === "corner") {
+          nextW = Math.max(120, Math.min(window.innerWidth, Math.round(startW + dx)));
+          nextH = Math.max(60, Math.min(window.innerHeight, Math.round(startH + dy)));
+        }
+
         updatePosLayout((prev) => ({
           ...prev,
           zones: {
             ...prev.zones,
-            [safeZoneId]: {
-              ...prev.zones[safeZoneId],
+            [safeId]: {
+              ...prev.zones[safeId],
               width: nextW,
               height: nextH,
+              offsetX: nextOffsetX,
+              offsetY: nextOffsetY,
             },
           },
         }));
@@ -1247,7 +1454,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [posLayout.locked, posLayout.zones, updatePosLayout],
+    [isFreeMode, posLayout.zones, updatePosLayout],
   );
 
   const [calcOpen, setCalcOpen] = useState(false);
@@ -1276,13 +1483,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   const docLang = company.data?.defaultDocLang ?? session.lang;
   const empty = lines.length === 0;
 
-  const prevLinesLengthRef = useRef<number>(lines.length);
-  const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
-  const [waitingForNextItem, setWaitingForNextItem] = useState(false);
-  const [idleRoaming, setIdleRoaming] = useState(false);
-  const [roamPercent, setRoamPercent] = useState(0);
-  const [justAddedPulse, setJustAddedPulse] = useState(false);
-
   useEffect(() => {
     const onResize = () => {
       setLeftWidth((prev) => clampLeftWidth(prev));
@@ -1290,14 +1490,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [clampLeftWidth]);
-
-  const togglePin = useCallback(() => {
-    setSplitPinned((prev) => {
-      const next = !prev;
-      rememberSplitPinned(next);
-      return next;
-    });
-  }, []);
 
   const toggleRailCollapsed = useCallback(() => {
     setRailCollapsed((prev) => {
@@ -1316,75 +1508,6 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       return next;
     });
   }, [updatePosLayout]);
-
-  const handleDividerPointerDown = useCallback(
-    (e: PointerEvent<HTMLDivElement>) => {
-      if (splitPinned || posLayout.locked) {
-        toast.info("التقسيم مثبت — فك التثبيت أو القفل أولاً لتغيير العرض");
-        return;
-      }
-      e.preventDefault();
-      setDraggingSplit(true);
-      const startX = e.clientX;
-      const startWidth = clampLeftWidth(leftWidth);
-
-      const onMove = (moveEvent: globalThis.PointerEvent) => {
-        const deltaX = moveEvent.clientX - startX;
-        const nextWidth = clampLeftWidth(startWidth + deltaX);
-        setLeftWidth(nextWidth);
-      };
-
-      const onUp = (upEvent: globalThis.PointerEvent) => {
-        const deltaX = upEvent.clientX - startX;
-        const finalWidth = clampLeftWidth(startWidth + deltaX);
-        setLeftWidth(finalWidth);
-        rememberSplitWidth(finalWidth);
-        setDraggingSplit(false);
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-    },
-    [clampLeftWidth, leftWidth, posLayout.locked, splitPinned],
-  );
-
-  useEffect(() => {
-    const grew = lines.length > prevLinesLengthRef.current;
-    prevLinesLengthRef.current = lines.length;
-    setLastActivityAt(Date.now());
-    setWaitingForNextItem(false);
-    setIdleRoaming(false);
-    setRoamPercent(0);
-
-    if (!grew) return;
-    setJustAddedPulse(true);
-    const pulseTimer = window.setTimeout(() => {
-      setJustAddedPulse(false);
-    }, 650);
-    return () => window.clearTimeout(pulseTimer);
-  }, [lines.length]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const elapsed = Date.now() - lastActivityAt;
-      const hasOpenCart = lines.length > 0;
-      setWaitingForNextItem(hasOpenCart && elapsed >= PAUSE_WAIT_THRESHOLD_MS);
-
-      const shouldRoam =
-        !hasOpenCart && dialog === null && !anySubModal && !approval.pending && elapsed >= IDLE_ROAM_THRESHOLD_MS;
-      setIdleRoaming(shouldRoam);
-      if (shouldRoam) {
-        const nextRandom = Math.round(8 + Math.random() * 68);
-        setRoamPercent(nextRandom);
-      } else {
-        setRoamPercent(0);
-      }
-    }, 2500);
-
-    return () => window.clearInterval(timer);
-  }, [anySubModal, approval.pending, dialog, lastActivityAt, lines.length]);
 
   useEffect(() => {
     if (empty) useCart.getState().setLang(docLang);
@@ -1422,6 +1545,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           return;
         }
         beep("error");
+        playSoftChime("error", softChimeEnabled);
         notify("error", t("pos:scan.variantParent"));
         return;
       }
@@ -1438,10 +1562,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         separate,
       });
       beep("ok");
+      playSoftChime("add", softChimeEnabled);
       setNotice(null);
       if (modules.includes("serials")) void askSerials(product.id).catch(() => undefined);
     },
-    [askSerials, lang, modules, notify, t],
+    [askSerials, lang, modules, notify, softChimeEnabled, t],
   );
 
   const handleQuickPriceSubmit = useCallback(
@@ -1474,6 +1599,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               },
             );
             beep("ok");
+            playSoftChime("add", softChimeEnabled);
             setNotice(null);
             return;
           }
@@ -1502,9 +1628,10 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         },
       );
       beep("ok");
+      playSoftChime("add", softChimeEnabled);
       setNotice(null);
     },
-    [defaultTaxRateId, findByCode, lang, units],
+    [defaultTaxRateId, findByCode, lang, softChimeEnabled, units],
   );
 
   const handleQuickWeightSubmit = useCallback(
@@ -1514,6 +1641,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           ? Math.round(weightValue * 1_000)
           : Math.round(weightValue);
       if (qtyThousandths <= 0) {
+        playSoftChime("error", softChimeEnabled);
         toast.error("الوزن غير صالح");
         return;
       }
@@ -1522,16 +1650,18 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         const hit = await findByCode.mutateAsync(barcode);
         if (!hit) {
           beep("error");
+          playSoftChime("error", softChimeEnabled);
           toast.error(`لم يتم العثور على باركود: ${barcode}`);
           return;
         }
         addProduct(hit.product, qtyThousandths, 3, false);
       } catch (error) {
         beep("error");
+        playSoftChime("error", softChimeEnabled);
         toast.error(errorText(error));
       }
     },
-    [addProduct, errorText, findByCode],
+    [addProduct, errorText, findByCode, softChimeEnabled],
   );
 
   const addHit = useCallback(
@@ -1582,6 +1712,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         } else if (packCode) {
           if (packCode.customerId) useCart.getState().setCustomer(packCode.customerId);
           beep("ok");
+          playSoftChime("add", softChimeEnabled);
           notify("info", packCode.notice);
         } else if (lan.isTill && lan.online) {
           const hits = await searchHost.mutateAsync({
@@ -1595,24 +1726,41 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
             syncNow.mutate();
           } else {
             beep("error");
+            playSoftChime("error", softChimeEnabled);
             notify("error", t("sync:lan.shell.notFoundAnywhere"));
           }
         } else {
           beep("error");
+          playSoftChime("error", softChimeEnabled);
           notify("error", t("pos:scan.notFound", { code }));
         }
       } catch (error) {
         beep("error");
+        playSoftChime("error", softChimeEnabled);
         notify("error", errorText(error));
       }
     },
-    [addHit, errorText, findByCode, lan.isTill, lan.online, lang, modules, notify, searchHost, syncNow, t],
+    [
+      addHit,
+      errorText,
+      findByCode,
+      lan.isTill,
+      lan.online,
+      lang,
+      modules,
+      notify,
+      searchHost,
+      softChimeEnabled,
+      syncNow,
+      t,
+    ],
   );
 
   const onScan = (code: string) => {
     if (approval.pending || anySubModal) return;
     if (quickPaying.current) {
       beep("error");
+      playSoftChime("error", softChimeEnabled);
       return;
     }
     if (dialog === null) {
@@ -1622,6 +1770,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       void lookup(code);
     } else {
       beep("error");
+      playSoftChime("error", softChimeEnabled);
       toast.warning(t("pos:scan.closeDialog"));
     }
   };
@@ -1839,16 +1988,23 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       if (line !== null) setDialog({ kind: "pack", view: { kind: "serial", line } });
     };
   }
+
   const bound = (Object.keys(DEFAULT_KEYS) as TillAction[]).filter((action) => handlers[action]);
-  const hotkeys: Partial<Record<Hotkey, () => void>> = { F11: () => setDialog({ kind: "scale" }) };
-  for (const action of bound) hotkeys[keys[action]] = handlers[action];
+  const hotkeys: Partial<Record<Hotkey, () => void>> = {
+    F11: () => setDialog({ kind: "scale" }),
+    F12: pay,
+    Escape: () => setDialog((current) => (current ? null : { kind: "menu" })),
+  };
+  for (const action of bound) {
+    if (keys[action]) hotkeys[keys[action]] = handlers[action];
+  }
   const activeHotkeys: Record<string, () => void> = {};
   for (const [hotkeyKey, handlerFn] of Object.entries(hotkeys)) {
     if (hotkeyKey && handlerFn) {
       activeHotkeys[hotkeyKey] = handlerFn;
     }
   }
-  useHotkeys(activeHotkeys, dialog === null && !anySubModal && !approval.pending && !quickBusy);
+  useHotkeys(activeHotkeys, !anySubModal && !approval.pending && !quickBusy);
 
   const cap = (action: TillAction) => ({
     shortcut: ariaKey(keys[action]),
@@ -1858,7 +2014,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
   useCtrlHotkey(
     "d",
     () => openDialog({ kind: "quote" }),
-    dialog === null && !anySubModal && !approval.pending && can("sales.create"),
+    !anySubModal && !approval.pending && can("sales.create"),
   );
 
   const ctx: PosContext = {
@@ -1908,23 +2064,26 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
       : 0;
   const needsOwnerApproval = !can("sales.void_line");
 
-  const itemCount = lines.length;
-  const cycleStep = itemCount === 0 ? 0 : ((itemCount - 1) % CART_TRACK_CAPACITY) + 1;
-  const cyclePercent = itemCount === 0 ? 0 : Math.round((cycleStep / CART_TRACK_CAPACITY) * 100);
-  const trackPercent = idleRoaming ? roamPercent : cyclePercent;
-  const cartFillRatio = idleRoaming ? 0 : cycleStep / CART_TRACK_CAPACITY;
+  const receiptTotalSummary = useMemo(() => {
+    let total = 0;
+    for (const item of lines) {
+      total += Math.round((item.display.price * item.line.qty) / 1_000);
+    }
+    return total;
+  }, [lines]);
 
   const isHorizontalToolbar = posLayout.toolbarOrientation === "horizontal";
   const actionsCompact = isHorizontalToolbar ? false : (railCollapsed || posLayout.zones.actions.compact);
 
-  const pos = cn(
+  const posBtnClass = cn(
     "text-sm [&_kbd]:ms-0",
+    POS_3D_BTN,
     isHorizontalToolbar
       ? "h-10 shrink-0 flex-row gap-1.5 px-2.5"
       : cn("min-h-12 w-full flex-col gap-0.5", actionsCompact ? "px-1 [&_span]:sr-only" : "px-1.5"),
   );
 
-  const actions = (
+  const actionsContent = (
     <div
       className={cn(
         "flex gap-1.5",
@@ -1941,10 +2100,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <button
             type="button"
             onClick={toggleRailCollapsed}
-            title={actionsCompact ? "تمديد الشريط الوسطاني" : "تصغير الشريط الوسطاني"}
-            aria-label={actionsCompact ? "تمديد الشريط الوسطاني" : "تصغير الشريط الوسطاني"}
+            title={actionsCompact ? "تمديد الشريط" : "تصغير الشريط"}
+            aria-label={actionsCompact ? "تمديد الشريط" : "تصغير الشريط"}
             aria-expanded={!actionsCompact}
-            className="mb-0.5 inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-line bg-surface text-xs font-semibold text-ink-2 transition-colors hover:border-brand hover:text-ink"
+            className={cn(
+              "mb-0.5 inline-flex h-7 w-full items-center justify-center gap-1 rounded-lg bg-surface text-xs font-semibold text-ink-2 hover:text-ink",
+              POS_3D_BTN,
+            )}
           >
             {actionsCompact ? (
               <ChevronRight aria-hidden className="size-4 rtl:rotate-180" />
@@ -1960,17 +2122,18 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         <Button
           type="button"
           variant="secondary"
-          className={pos}
+          className={posBtnClass}
           title="سعر سريع"
           onClick={() => setQuickPriceOpen(true)}
         >
           <Tag aria-hidden />
           <span>سعر سريع</span>
         </Button>
+
         <Button
           type="button"
           variant="secondary"
-          className={pos}
+          className={posBtnClass}
           title="وزن سريع"
           onClick={() => setQuickWeightOpen(true)}
         >
@@ -1985,7 +2148,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         />
 
         <Button
-          className={pos}
+          className={posBtnClass}
           title={t("pos:actions.customer")}
           onClick={() => setDialog({ kind: "customer" })}
           {...cap("customer")}
@@ -1993,8 +2156,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <User aria-hidden />
           <span>{t("pos:actions.customer")}</span>
         </Button>
+
         <Button
-          className={pos}
+          className={posBtnClass}
           title={t("pos:actions.discount")}
           onClick={() => setDialog({ kind: "discount" })}
           {...cap("discount")}
@@ -2002,8 +2166,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <Percent aria-hidden />
           <span>{t("pos:actions.discount")}</span>
         </Button>
+
         <Button
-          className={pos}
+          className={posBtnClass}
           title={t("pos:actions.hold")}
           onClick={hold}
           disabled={!can("sales.hold")}
@@ -2012,8 +2177,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <Pause aria-hidden />
           <span>{t("pos:actions.hold")}</span>
         </Button>
+
         <Button
-          className={pos}
+          className={posBtnClass}
           title={t("pos:actions.return")}
           onClick={() => setDialog({ kind: "return" })}
           {...cap("return")}
@@ -2021,8 +2187,9 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <Undo2 aria-hidden className="rtl:-scale-x-100" />
           <span>{t("pos:actions.return")}</span>
         </Button>
+
         <Button
-          className={pos}
+          className={posBtnClass}
           title={t("pos:actions.drawer")}
           onClick={() => setDialog({ kind: "drawer" })}
           disabled={!can("cash.paid_in_out")}
@@ -2031,8 +2198,21 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           <Wallet aria-hidden />
           <span>{t("pos:actions.drawer")}</span>
         </Button>
+
         <Button
-          className={pos}
+          className={posBtnClass}
+          title="حفظ / تحصيل (F12)"
+          onClick={pay}
+          disabled={lines.length === 0 || Boolean(preview.error) || quickBusy}
+          shortcut="F12"
+          shortcutLabel="F12"
+        >
+          <Equal aria-hidden />
+          <span>حفظ F12</span>
+        </Button>
+
+        <Button
+          className={posBtnClass}
           title={t("pos:actions.menu")}
           onClick={() => setDialog({ kind: "menu" })}
           {...cap("menu")}
@@ -2061,12 +2241,12 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         action={
           <div className="flex gap-2">
             {can("cash.open") ? (
-              <Button variant="primary" size="lg" onClick={() => setDialog({ kind: "openSession" })}>
+              <Button className={POS_3D_PRIMARY} size="lg" onClick={() => setDialog({ kind: "openSession" })}>
                 <Wallet aria-hidden />
                 {t("pos:closed.open")}
               </Button>
             ) : null}
-            <Button variant="outline" size="lg" onClick={() => void navigate(backOfficeHome(session))}>
+            <Button variant="outline" className={POS_3D_BTN} size="lg" onClick={() => void navigate(backOfficeHome(session))}>
               {t("pos:closed.back")}
             </Button>
           </div>
@@ -2082,69 +2262,86 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         badge: `${lines.length} صنف`,
       },
       actions: {
-        title: "أزرار الكاشير",
+        title: "المفاتيح",
         badge: isHorizontalToolbar ? "أفقي" : "رأسي",
       },
       products: {
-        title: "الباركود والمنتجات",
-        badge: category ? "قسم محدد" : "الكل",
+        title: "المنتجات والباركود",
+        badge: category ? "قسم" : "الكل",
       },
     }),
     [category, isHorizontalToolbar, lines.length],
   );
 
-  const hiddenZones = (["receipt", "actions", "products"] as PosZoneId[]).filter(
+  const dockedZones = (["receipt", "actions", "products"] as PosZoneId[]).filter(
     (id) => posLayout.zones[id].hidden,
   );
 
-  const renderZoneHeader = (zoneId: PosZoneId, extraRight?: React.ReactNode) => {
+  const visibleZonesCount = (["receipt", "actions", "products"] as PosZoneId[]).filter(
+    (id) => !posLayout.zones[id].hidden,
+  ).length;
+
+  const renderZoneHeader = (zoneId: PosZoneId) => {
     const safeId: PosZoneId = zoneId ?? "receipt";
     const z = posLayout.zones[safeId];
-    const isCompact = safeId === "actions" ? actionsCompact : z.compact;
+    const supportsFullscreen = safeId === "receipt" || safeId === "products";
+
     return (
       <div
         onPointerDown={(e) => startZoneDrag(safeId, e)}
         className={cn(
-          "flex shrink-0 items-center justify-between gap-1.5 border-b border-line bg-surface-2/80 px-2.5 py-1.5 text-xs",
-          !posLayout.locked && "cursor-move select-none",
+          "flex shrink-0 items-center justify-start gap-2 border-b border-line bg-surface-2/90 px-2.5 py-1.5 text-xs shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)]",
+          isFreeMode && "cursor-move select-none",
         )}
       >
         <div className="flex min-w-0 items-center gap-1.5">
-          {!posLayout.locked ? <Move aria-hidden className="size-3.5 shrink-0 text-ink-2" /> : null}
+          {isFreeMode ? <Move aria-hidden className="size-3.5 shrink-0 text-brand" /> : null}
           <span className="truncate font-bold text-ink">{zoneMeta[safeId].title}</span>
           <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-ink-2">
             {zoneMeta[safeId].badge}
           </span>
-          {extraRight}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            disabled={posLayout.locked}
-            onClick={() => cycleZonePosition(safeId)}
-            title="تبديل موضع الجزء"
-            aria-label={`تبديل موضع ${zoneMeta[safeId].title}`}
-            className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink disabled:opacity-40"
-          >
-            <Layers aria-hidden className="size-3.5" />
-          </button>
-          <button
-            type="button"
             onClick={() => toggleZoneCompact(safeId)}
-            title={isCompact ? "تمديد الجزء" : "تصغير الجزء"}
-            aria-label={isCompact ? `تمديد ${zoneMeta[safeId].title}` : `تصغير ${zoneMeta[safeId].title}`}
-            className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink"
+            title="تصغير / تمديد"
+            aria-label={`تصغير ${zoneMeta[safeId].title}`}
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-md bg-surface text-ink-2 hover:text-ink",
+              POS_3D_BTN,
+              z.compact && "border-amber-500 text-amber-500",
+            )}
           >
             <Minimize2 aria-hidden className="size-3.5" />
           </button>
+
+          {supportsFullscreen ? (
+            <button
+              type="button"
+              onClick={() => toggleZoneFullscreen(safeId)}
+              title={z.fullscreen ? "خروج من ملء الشاشة" : "ملء الشاشة"}
+              aria-label={`ملء الشاشة ${zoneMeta[safeId].title}`}
+              className={cn(
+                "inline-flex size-6 items-center justify-center rounded-md bg-surface text-ink-2 hover:text-ink",
+                POS_3D_BTN,
+                z.fullscreen && "border-amber-500 bg-amber-400 text-slate-950",
+              )}
+            >
+              <Maximize2 aria-hidden className="size-3.5" />
+            </button>
+          ) : null}
+
           <button
             type="button"
-            disabled={posLayout.locked}
-            onClick={() => minimizeZoneToIcon(safeId)}
-            title="إنزال كأيقونة في الصفحة"
-            aria-label={`إنزال ${zoneMeta[safeId].title} كأيقونة`}
-            className="inline-flex size-6 items-center justify-center rounded border border-line bg-surface text-ink-2 transition-colors hover:border-brand hover:text-ink disabled:opacity-40"
+            onClick={() => minimizeZoneToDock(safeId)}
+            title="إنزال إلى شريط المهام السفلي"
+            aria-label={`إنزال ${zoneMeta[safeId].title} للأسفل`}
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-md bg-surface text-ink-2 hover:text-danger",
+              POS_3D_BTN,
+            )}
           >
             <X aria-hidden className="size-3.5" />
           </button>
@@ -2153,50 +2350,93 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
     );
   };
 
-  const renderResizeHandle = (zoneId: PosZoneId) => {
+  const renderResizeHandles = (zoneId: PosZoneId) => {
     const safeId: PosZoneId = zoneId ?? "receipt";
-    if (posLayout.locked) return null;
+    if (!isFreeMode || posLayout.zones[safeId].fullscreen) return null;
     return (
-      <div
-        onPointerDown={(e) => startZoneResize(safeId, e)}
-        title="تمديد حر بالماوس"
-        aria-label={`تمديد ${zoneMeta[safeId].title}`}
-        className="absolute bottom-1 end-1 z-20 flex size-4 cursor-nwse-resize items-end justify-end rounded-sm bg-surface-2/90 p-0.5 text-ink-2 hover:bg-brand hover:text-brand-ink"
-      >
-        <span className="block size-2 border-b-2 border-e-2 border-current" />
-      </div>
+      <>
+        <div
+          onPointerDown={(e) => startEdgeResize(safeId, "top", e)}
+          title="تمديد من الأعلى"
+          aria-label={`تمديد ${zoneMeta[safeId].title} من الأعلى`}
+          className="absolute inset-x-2 top-0 z-20 h-1.5 cursor-ns-resize hover:bg-brand/50"
+        />
+        <div
+          onPointerDown={(e) => startEdgeResize(safeId, "bottom", e)}
+          title="تمديد من الأسفل"
+          aria-label={`تمديد ${zoneMeta[safeId].title} من الأسفل`}
+          className="absolute inset-x-2 bottom-0 z-20 h-1.5 cursor-ns-resize hover:bg-brand/50"
+        />
+        <div
+          onPointerDown={(e) => startEdgeResize(safeId, "left", e)}
+          title="تمديد من اليسار"
+          aria-label={`تمديد ${zoneMeta[safeId].title} من اليسار`}
+          className="absolute inset-y-2 left-0 z-20 w-1.5 cursor-ew-resize hover:bg-brand/50"
+        />
+        <div
+          onPointerDown={(e) => startEdgeResize(safeId, "right", e)}
+          title="تمديد من اليمين"
+          aria-label={`تمديد ${zoneMeta[safeId].title} من اليمين`}
+          className="absolute inset-y-2 right-0 z-20 w-1.5 cursor-ew-resize hover:bg-brand/50"
+        />
+        <div
+          onPointerDown={(e) => startEdgeResize(safeId, "corner", e)}
+          title="تمديد حر من الزاوية"
+          aria-label={`تمديد ${zoneMeta[safeId].title}`}
+          className="absolute bottom-1 end-1 z-20 flex size-4 cursor-nwse-resize items-end justify-end rounded-sm bg-surface-2/90 p-0.5 text-ink-2 hover:bg-brand hover:text-brand-ink"
+        >
+          <span className="block size-2 border-b-2 border-e-2 border-current" />
+        </div>
+      </>
     );
   };
 
   const renderZoneCard = (zoneId: PosZoneId = "receipt") => {
     const safeId: PosZoneId = zoneId ?? "receipt";
     const z = posLayout.zones[safeId];
-    if (z.hidden) return null;
+    const isSoloFullScreen = z.fullscreen && visibleZonesCount === 1;
+    const isLocalFullScreen = z.fullscreen && visibleZonesCount > 1;
 
-    const customStyle: React.CSSProperties = {
-      transform:
-        z.offsetX !== 0 || z.offsetY !== 0
-          ? `translate3d(${z.offsetX}px, ${z.offsetY}px, 0)`
-          : undefined,
-      ...(z.width ? { width: `${z.width}px` } : {}),
-      ...(z.height ? { height: `${z.height}px` } : {}),
-    };
+    const customStyle: React.CSSProperties =
+      isFreeMode && !z.fullscreen
+        ? {
+            transform:
+              z.offsetX !== 0 || z.offsetY !== 0
+                ? `translate3d(${z.offsetX}px, ${z.offsetY}px, 0)`
+                : undefined,
+            ...(z.width ? { width: `${z.width}px` } : {}),
+            ...(z.height ? { height: `${z.height}px` } : {}),
+          }
+        : {};
 
     if (safeId === "receipt") {
-      const receiptWidth = z.width ?? leftWidth;
+      const receiptWidth =
+        isSoloFullScreen || isLocalFullScreen
+          ? undefined
+          : isFreeMode && z.width
+            ? z.width
+            : isHorizontalToolbar
+              ? undefined
+              : leftWidth;
+
       return (
         <div
           key="receipt"
           dir="rtl"
           style={{
-            width: `${receiptWidth}px`,
-            ...(z.height ? { height: `${z.height}px` } : {}),
+            ...(receiptWidth ? { width: `${receiptWidth}px` } : {}),
+            ...(isFreeMode && z.height && !z.fullscreen ? { height: `${z.height}px` } : {}),
             transform: customStyle.transform,
           }}
           className={cn(
-            "relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface transition-shadow",
-            activeDragZone === "receipt" && "z-20 ring-2 ring-brand shadow-xl",
-            z.compact && "max-h-44",
+            "relative flex min-h-0 flex-col overflow-hidden",
+            POS_3D_PANEL,
+            z.hidden && "hidden",
+            !isSoloFullScreen && !isLocalFullScreen && !isHorizontalToolbar && "shrink-0",
+            (isSoloFullScreen || isLocalFullScreen) && "flex-1 w-full h-full z-20",
+            isHorizontalToolbar && !z.fullscreen && "flex-1 min-h-[180px]",
+            activeDragZone === "receipt" && "z-20 ring-2 ring-brand",
+            z.compact && !z.fullscreen && "max-h-44",
           )}
         >
           {renderZoneHeader("receipt")}
@@ -2235,11 +2475,11 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               }
               payButton={
                 <Button
-                  variant="primary"
-                  className="min-h-14 w-full text-2xl font-bold"
+                  className={cn("min-h-14 w-full text-2xl font-extrabold", POS_3D_PRIMARY)}
                   disabled={lines.length === 0 || Boolean(preview.error) || quickBusy}
                   onClick={pay}
-                  {...cap("checkout")}
+                  shortcut="F12"
+                  shortcutLabel="F12"
                 >
                   {t("payments:pay")}
                 </Button>
@@ -2251,12 +2491,15 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                     onClick={() => setCalcOpen(true)}
                     title="آلة حاسبة"
                     aria-label="آلة حاسبة"
-                    className="inline-flex size-8 items-center justify-center rounded-md border border-line bg-surface-2 text-ink transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand"
+                    className={cn(
+                      "inline-flex size-8 items-center justify-center rounded-lg bg-surface-2 text-ink hover:bg-brand-soft hover:text-brand",
+                      POS_3D_BTN,
+                    )}
                   >
                     <Calculator aria-hidden className="size-4" />
                   </button>
                   {withTables ? (
-                    <Button variant="outline" onClick={() => void navigate("/pos/floor")}>
+                    <Button variant="outline" className={POS_3D_BTN} onClick={() => void navigate("/pos/floor")}>
                       {t("pos:actions.tables")}
                     </Button>
                   ) : null}
@@ -2294,6 +2537,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                   {hardware.data?.scale ? (
                     <Button
                       variant="outline"
+                      className={POS_3D_BTN}
                       onClick={() => setDialog({ kind: "scale" })}
                       shortcut="F11"
                       shortcutLabel={t("common:keys.f11")}
@@ -2303,7 +2547,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                     </Button>
                   ) : null}
                   {heldCount > 0 ? (
-                    <Button variant="outline" onClick={() => openDialog({ kind: "held" })} {...cap("held")}>
+                    <Button variant="outline" className={POS_3D_BTN} onClick={() => openDialog({ kind: "held" })} {...cap("held")}>
                       {t("pos:actions.held", { count: heldCount })}
                     </Button>
                   ) : null}
@@ -2313,7 +2557,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               actionsCollapsed={actionsCompact}
             />
           </div>
-          {renderResizeHandle("receipt")}
+          {renderResizeHandles("receipt")}
         </div>
       );
     }
@@ -2325,37 +2569,35 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           dir="rtl"
           style={customStyle}
           className={cn(
-            "relative flex shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface-2/80 transition-shadow",
+            "relative flex shrink-0 flex-col overflow-hidden",
+            POS_3D_PANEL,
+            "bg-surface-2/90",
+            z.hidden && "hidden",
             isHorizontalToolbar ? "w-full" : actionsCompact ? "w-14" : "w-36",
-            activeDragZone === "actions" && "z-20 ring-2 ring-brand shadow-xl",
+            activeDragZone === "actions" && "z-20 ring-2 ring-brand",
           )}
         >
-          {renderZoneHeader(
-            "actions",
-            <button
-              type="button"
-              onClick={toggleToolbarOrientation}
-              title={isHorizontalToolbar ? "تحويل الشريط لعمودي" : "تمديد الشريط أفقياً"}
-              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-ink hover:border-brand"
-            >
-              {isHorizontalToolbar ? "رأسي" : "أفقي"}
-            </button>,
-          )}
-          <div className="p-1.5">{actions}</div>
-          {renderResizeHandle("actions")}
+          {renderZoneHeader("actions")}
+          <div className="p-1.5">{actionsContent}</div>
+          {renderResizeHandles("actions")}
         </div>
       );
     }
 
+    const productsHiddenVisually = z.hidden;
     return (
       <main
         key="products"
         dir="rtl"
         style={customStyle}
         className={cn(
-          "relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto rounded-lg border border-line bg-surface/40 p-4 transition-shadow",
-          activeDragZone === "products" && "z-20 ring-2 ring-brand shadow-xl",
-          z.compact && "max-h-48",
+          "relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto p-4",
+          POS_3D_PANEL,
+          "bg-surface/60",
+          productsHiddenVisually && "hidden",
+          (z.fullscreen || isLocalFullScreen) && "z-20 h-full w-full",
+          activeDragZone === "products" && "z-20 ring-2 ring-brand",
+          z.compact && !z.fullscreen && "max-h-48",
         )}
       >
         <div className="-mx-4 -mt-4 mb-1">{renderZoneHeader("products")}</div>
@@ -2382,38 +2624,14 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
           }}
           onMove={(delta) => useCart.getState().move(delta)}
         />
-        <div
-          className={cn(
-            "relative flex h-9 items-center overflow-hidden rounded-control border border-line bg-surface-2/70 px-3 transition-colors",
-            justAddedPulse && "border-primary/50 bg-surface-2",
-          )}
-        >
-          <div className="pointer-events-none absolute inset-x-3 top-1/2 h-0.5 -translate-y-1/2 bg-line/60" />
-          <div
-            className="relative z-10 flex items-center gap-1.5 text-ink transition-all duration-500 ease-out"
-            style={{ marginInlineStart: `${trackPercent}%` }}
-          >
-            <SupermarketCartIcon
-              fillRatio={cartFillRatio}
-              roaming={idleRoaming}
-              justAdded={justAddedPulse}
-            />
-            <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold text-ink-2">
-              {idleRoaming ? "خمول" : `${cyclePercent}%`}
-            </span>
-          </div>
-          {waitingForNextItem ? (
-            <span
-              role="status"
-              className="ms-auto inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning animate-pulse"
-            >
-              <Clock aria-hidden className="h-3.5 w-3.5" />
-              بانتظار الصنف التالي
-            </span>
-          ) : null}
-        </div>
+
         {selectedLine ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface-2/80 px-3 py-2 transition-colors">
+          <div
+            className={cn(
+              "flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2/90 px-3 py-2",
+              POS_3D_BTN,
+            )}
+          >
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="truncate font-semibold">{selectedLine.display.name}</span>
               <span className="rounded-full bg-surface px-2.5 py-0.5 text-sm font-semibold text-ink-2">
@@ -2429,9 +2647,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               <span
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                  needsOwnerApproval
-                    ? "bg-warning-soft text-warning"
-                    : "bg-info-soft text-info",
+                  needsOwnerApproval ? "bg-warning-soft text-warning" : "bg-info-soft text-info",
                 )}
               >
                 {needsOwnerApproval ? (
@@ -2449,6 +2665,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               <Button
                 type="button"
                 variant="danger"
+                className={POS_3D_BTN}
                 disabled={approval.pending || quickBusy || isVoiding}
                 onClick={() => {
                   if (selected !== null) void voidLine(selected);
@@ -2456,37 +2673,36 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
                 shortcut="Delete"
                 shortcutLabel="Delete"
               >
-                {isVoiding ? (
-                  <Loader2 aria-hidden className="animate-spin" />
-                ) : (
-                  <Trash2 aria-hidden />
-                )}
+                {isVoiding ? <Loader2 aria-hidden className="animate-spin" /> : <Trash2 aria-hidden />}
                 حذف
               </Button>
             </div>
           </div>
         ) : null}
+
         {notice ? (
           <p
             role={notice.tone === "error" ? "alert" : "status"}
             className={cn(
-              "rounded-control p-3 font-semibold",
+              "rounded-lg p-3 font-semibold",
               notice.tone === "error" ? "bg-danger-soft text-danger" : "bg-info-soft text-info",
             )}
           >
             {notice.text}
           </p>
         ) : lastScan ? (
-          <p className="flex items-center justify-between rounded-control bg-surface p-3 text-lg">
+          <p className="flex items-center justify-between rounded-lg bg-surface p-3 text-lg shadow-xs">
             <span>{t("pos:lastScan", { name: lastScan.name })}</span>
             <Amount value={lastScan.price} className="font-bold" />
           </p>
         ) : null}
+
         {modules.includes("department_keys") || modules.includes("flexy") ? (
           <div className="flex flex-wrap gap-2">
             {modules.includes("department_keys") ? (
               <Button
                 variant={departments ? "secondary" : "outline"}
+                className={POS_3D_BTN}
                 aria-pressed={departments}
                 onClick={toggleDepartments}
                 {...cap("department_keys")}
@@ -2495,12 +2711,13 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               </Button>
             ) : null}
             {modules.includes("flexy") ? (
-              <Button variant="outline" onClick={flexy} {...cap("flexy")}>
+              <Button variant="outline" className={POS_3D_BTN} onClick={flexy} {...cap("flexy")}>
                 {t("pos:actions.flexy")}
               </Button>
             ) : null}
           </div>
         ) : null}
+
         {departments ? (
           <Suspense fallback={null}>
             <DepartmentKeysPanel />
@@ -2508,7 +2725,7 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
         ) : (
           <ProductGrid onPick={pickProduct} category={category} onCategory={setCategory} />
         )}
-        {renderResizeHandle("products")}
+        {renderResizeHandles("products")}
       </main>
     );
   };
@@ -2532,72 +2749,156 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
 
       <div
         dir="rtl"
-        className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface-2/80 px-3 py-1.5 text-xs"
+        className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface-2/90 px-3 py-1.5 text-xs shadow-[0_2px_8px_-2px_rgba(15,23,42,0.14)]"
       >
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={toggleLayoutLock}
-            className={cn(
-              "inline-flex h-7 items-center gap-1 rounded-md border px-2 font-semibold transition-colors",
-              posLayout.locked
-                ? "border-amber-500 bg-amber-500 text-slate-950"
-                : "border-line bg-surface text-ink hover:border-brand",
-            )}
-          >
-            {posLayout.locked ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
-            <span>{posLayout.locked ? "مثبّت" : "تعديل حر"}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => swapZones("receipt", "products")}
-            disabled={posLayout.locked}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand disabled:opacity-40"
-          >
-            <Layers aria-hidden className="size-3.5" />
-            <span>تبديل الإيصال والمنتجات</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={toggleToolbarOrientation}
-            disabled={posLayout.locked}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand disabled:opacity-40"
-          >
-            <span>{isHorizontalToolbar ? "أزرار رأسية" : "أزرار أفقية"}</span>
-          </button>
+        <div
+          role="radiogroup"
+          aria-label="أوضاع الشاشة"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          {POS_MODES.map((m) => {
+            const checked = posLayout.mode === m.id;
+            return (
+              <label
+                key={m.id}
+                className={cn(
+                  "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 font-bold select-none",
+                  POS_3D_BTN,
+                  checked
+                    ? "border-amber-500 bg-amber-400 text-slate-950"
+                    : "bg-surface text-ink-2 hover:text-ink",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="pos-screen-mode"
+                  value={m.id}
+                  checked={checked}
+                  onChange={() => selectMode(m.id)}
+                  className="size-3.5 accent-slate-950 cursor-pointer"
+                />
+                <span>{m.label}</span>
+              </label>
+            );
+          })}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {isFreeMode ? (
+            <button
+              type="button"
+              onClick={resetFreeModeDimensions}
+              title="تصفير مقاسات ومواقع الوضع الحر"
+              className={cn(
+                "inline-flex h-7 items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 font-bold text-amber-500 hover:bg-amber-500/25",
+                POS_3D_BTN,
+              )}
+            >
+              <RotateCcw aria-hidden className="size-3.5" />
+              <span>تصفير مقاسات الوضع الحر</span>
+            </button>
+          ) : null}
+
           <button
             type="button"
-            onClick={() => applyPreset("default")}
-            disabled={posLayout.locked}
-            className="h-7 rounded-md border border-line bg-surface px-2 font-semibold text-ink-2 hover:border-brand hover:text-ink disabled:opacity-40"
+            onClick={toggleOrientationQuick}
+            title="تبديل سريع بين الرأسي والأفقي"
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-lg bg-surface px-2.5 font-bold text-ink hover:text-brand",
+              POS_3D_BTN,
+            )}
           >
-            افتراضي
+            {isHorizontalToolbar ? (
+              <Columns2 aria-hidden className="size-3.5" />
+            ) : (
+              <Rows2 aria-hidden className="size-3.5" />
+            )}
+            <span>{isHorizontalToolbar ? "تحويل رأسي" : "تحويل أفقي"}</span>
           </button>
+
           <button
             type="button"
-            onClick={() => applyPreset("receipt_focus")}
-            disabled={posLayout.locked}
-            className="h-7 rounded-md border border-line bg-surface px-2 font-semibold text-ink-2 hover:border-brand hover:text-ink disabled:opacity-40"
+            onClick={() => (customSlots.slot1 ? loadCustomSlot("slot1") : saveCustomSlot("slot1"))}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              saveCustomSlot("slot1");
+            }}
+            title={customSlots.slot1 ? "تحميل تخطيط 1 (كليك يمين للحفظ)" : "حفظ التخطيط 1"}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-lg px-2 font-bold",
+              POS_3D_BTN,
+              customSlots.slot1
+                ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-500"
+                : "bg-surface text-ink-2 hover:text-ink",
+            )}
           >
-            تركيز الإيصال
+            <BookmarkCheck aria-hidden className="size-3.5" />
+            <span>{customSlots.slot1 ? "تخطيط 1" : "حفظ 1"}</span>
           </button>
+
           <button
             type="button"
-            onClick={() => applyPreset("products_focus")}
-            disabled={posLayout.locked}
-            className="h-7 rounded-md border border-line bg-surface px-2 font-semibold text-ink-2 hover:border-brand hover:text-ink disabled:opacity-40"
+            onClick={() => (customSlots.slot2 ? loadCustomSlot("slot2") : saveCustomSlot("slot2"))}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              saveCustomSlot("slot2");
+            }}
+            title={customSlots.slot2 ? "تحميل تخطيط 2 (كليك يمين للحفظ)" : "حفظ التخطيط 2"}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-lg px-2 font-bold",
+              POS_3D_BTN,
+              customSlots.slot2
+                ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-500"
+                : "bg-surface text-ink-2 hover:text-ink",
+            )}
           >
-            تركيز المنتجات
+            <BookmarkCheck aria-hidden className="size-3.5" />
+            <span>{customSlots.slot2 ? "تخطيط 2" : "حفظ 2"}</span>
           </button>
+
           <button
             type="button"
-            onClick={() => applyPreset("default")}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-surface px-2 font-semibold text-ink hover:border-brand"
+            onClick={toggleSoftChime}
+            title="تنبيه صوتي خفيف اختياري عند تأكيد الإضافة أو خطأ الباركود"
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-lg px-2 font-bold",
+              POS_3D_BTN,
+              softChimeEnabled
+                ? "border-sky-500/60 bg-sky-500/15 text-sky-500"
+                : "bg-surface text-ink-2 hover:text-ink",
+            )}
+          >
+            {softChimeEnabled ? (
+              <Volume2 aria-hidden className="size-3.5" />
+            ) : (
+              <VolumeX aria-hidden className="size-3.5" />
+            )}
+            <span>صوت خفيف</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleFreeMode}
+            title="تبديل سريع بين الوضع الحر والوضع السابق"
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-lg px-2.5 font-bold",
+              POS_3D_BTN,
+              isFreeMode
+                ? "border-amber-500 bg-amber-400 text-slate-950"
+                : "bg-surface text-ink hover:text-brand",
+            )}
+          >
+            <Move aria-hidden className="size-3.5" />
+            <span>{isFreeMode ? "رجوع للوضع السابق" : "تبديل للوضع الحر"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => selectMode("v_default")}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-lg bg-surface px-2.5 font-bold text-ink hover:text-brand",
+              POS_3D_BTN,
+            )}
           >
             <RotateCcw aria-hidden className="size-3.5" />
             <span>استعادة</span>
@@ -2617,57 +2918,73 @@ export function SaleScreen({ session, withTables = false }: { session: Session; 
               isHorizontalToolbar ? "flex-col" : "flex-row",
             )}
           >
-            {!isHorizontalToolbar ? (
-              <div
-                style={{ left: `${leftWidth}px` }}
-                className={cn(
-                  "pointer-events-auto fixed inset-y-0 z-30 flex w-2 -translate-x-1/2 flex-col items-center border-x border-line bg-surface-2/40 transition-colors",
-                  !splitPinned && !posLayout.locked && "cursor-col-resize hover:bg-surface-2",
-                  draggingSplit && "bg-surface-2",
-                )}
-                onPointerDown={handleDividerPointerDown}
-              >
-                <button
-                  type="button"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={togglePin}
-                  title={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
-                  aria-label={splitPinned ? "إلغاء تثبيت العرض" : "تثبيت العرض"}
-                  aria-pressed={splitPinned}
-                  className={cn(
-                    "mt-2 inline-flex size-6 items-center justify-center rounded-md border shadow-xs transition-colors",
-                    splitPinned
-                      ? "border-amber-500 bg-amber-500 text-slate-950"
-                      : "border-line bg-surface text-ink-2 hover:border-amber-500 hover:text-amber-500",
-                  )}
-                >
-                  {splitPinned ? <Pin aria-hidden className="size-3.5" /> : <PinOff aria-hidden className="size-3.5" />}
-                </button>
-              </div>
-            ) : null}
-
             {orderedZones.map((zoneId) => renderZoneCard(zoneId ?? "receipt"))}
           </div>
 
-          {hiddenZones.length > 0 ? (
+          {dockedZones.length > 0 ? (
             <div
               dir="rtl"
-              className="flex flex-wrap items-center gap-2 border-t border-line bg-surface-2/90 px-3 py-1.5 text-xs"
+              className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-surface-2/95 px-3 py-1.5 text-xs shadow-[0_-2px_10px_-2px_rgba(15,23,42,0.18)]"
             >
-              <span className="font-semibold text-ink-2">أجزاء مصغّرة كأيقونات (نشطة بالخلفية):</span>
-              {hiddenZones.map((zoneId) => (
-                <button
-                  key={zoneId}
-                  type="button"
-                  onClick={() => restoreZone(zoneId)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-brand/50 bg-surface px-3 font-bold text-ink shadow-xs transition-colors hover:bg-brand hover:text-brand-ink"
-                >
-                  <span>{zoneMeta[zoneId].title}</span>
-                  <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
-                    {zoneMeta[zoneId].badge}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold text-ink-2">شريط المهام السفلي:</span>
+                {dockNotice ? (
+                  <span
+                    role="status"
+                    className="rounded-md bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-500"
+                  >
+                    {dockNotice}
                   </span>
-                </button>
-              ))}
+                ) : null}
+                {posLayout.zones.receipt.hidden ? (
+                  <span
+                    role="status"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 font-bold text-amber-500"
+                  >
+                    <span>الإيصال: {lines.length} صنف</span>
+                    <span>•</span>
+                    <Amount value={receiptTotalSummary} />
+                  </span>
+                ) : null}
+                {dockedZones.map((zoneId) => (
+                  <button
+                    key={zoneId}
+                    type="button"
+                    onClick={() => restoreZoneFromDock(zoneId)}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg bg-surface px-3 font-bold text-ink hover:bg-brand hover:text-brand-ink",
+                      POS_3D_BTN,
+                    )}
+                  >
+                    <span>{zoneMeta[zoneId].title}</span>
+                    <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
+                      {zoneMeta[zoneId].badge}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {posLayout.zones.products.hidden ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-emerald-500">
+                    ● ماسح الباركود والمنتجات نشط بالخلفية
+                  </span>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && text.trim()) {
+                        e.preventDefault();
+                        void lookup(text.trim());
+                      }
+                    }}
+                    placeholder="باركود سريع (Enter)..."
+                    className="h-7 w-44 rounded-lg border border-line bg-surface px-2.5 text-xs font-semibold text-ink focus:border-brand focus:outline-none"
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
